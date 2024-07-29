@@ -28,6 +28,7 @@ import { BuildInAddon, ThridPartyAddon } from '@/pages/addon';
 import ClusterManage from '@/pages/cluster-manage';
 import Login from '@/pages/login';
 import { Icons } from '@/components/icons';
+import KarmadaMetricsReference from '@/pages/Karmada-Metrics-Reference';
 
 export interface IRouteObjectHandle {
   icon?: ReactNode;
@@ -266,8 +267,19 @@ export function getRoutes() {
             },
           ],
         },
+        {
+          path: '/metrics-reference',
+          element: <KarmadaMetricsReference/>,
+          handle: {
+            sidebarKey: 'metrics-reference',
+            sidebarName: i18nInstance.t('53f8cd4a9e7a4c5fbd9829f2a99e2781'),
+            icon: <Icons.clusters {...IconStyles} />,
+            isPage: false,
+          },
+        }
       ],
     },
+    
     {
       path: '/login',
       errorElement: <ErrorBoundary />,
