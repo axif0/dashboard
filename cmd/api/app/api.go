@@ -6,6 +6,7 @@ import (
 	"github.com/karmada-io/dashboard/cmd/api/app/options"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
 	"github.com/karmada-io/dashboard/pkg/client"
+	"github.com/karmada-io/dashboard/pkg/config"
 	"github.com/karmada-io/dashboard/pkg/environment"
 	"github.com/karmada-io/karmada/pkg/sharedcli/klogflag"
 	"github.com/spf13/cobra"
@@ -16,10 +17,13 @@ import (
 	// Importing route packages forces route registration
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/auth"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/cluster"
+	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/config"
+	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/configmap"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/deployment"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/namespace"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/overview"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/propagationpolicy"
+	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/statefulset"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/unstructured"
 )
 
@@ -80,6 +84,7 @@ func run(ctx context.Context, opts *options.Options) error {
 	)
 	ensureAPIServerConnectionOrDie()
 	serve(opts)
+	config.InitDashboardConfig(client.InClusterClient(), ctx.Done())
 	select {
 	case <-ctx.Done():
 		os.Exit(0)

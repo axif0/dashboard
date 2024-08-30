@@ -329,10 +329,65 @@ type StatefulSetListChannel struct {
 	Error chan error
 }
 
+// GetStatefulSetListChannel returns a pair of channels to a StatefulSet list and errors that both must be read
+// numReads times.
+func GetStatefulSetListChannel(client client.Interface,
+	nsQuery *NamespaceQuery, numReads int) StatefulSetListChannel {
+	channel := StatefulSetListChannel{
+		List:  make(chan *apps.StatefulSetList, numReads),
+		Error: make(chan error, numReads),
+	}
+
+	go func() {
+		statefulSets, err := client.AppsV1().StatefulSets(nsQuery.ToRequestParam()).List(context.TODO(), helpers.ListEverything)
+		var filteredItems []apps.StatefulSet
+		for _, item := range statefulSets.Items {
+			if nsQuery.Matches(item.ObjectMeta.Namespace) {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		statefulSets.Items = filteredItems
+		for i := 0; i < numReads; i++ {
+			channel.List <- statefulSets
+			channel.Error <- err
+		}
+	}()
+
+	return channel
+}
+
 // ConfigMapListChannel is a list and error channels to ConfigMaps.
 type ConfigMapListChannel struct {
 	List  chan *v1.ConfigMapList
 	Error chan error
+}
+
+// GetConfigMapListChannel returns a pair of channels to a ConfigMap list and errors that both must be read
+// numReads times.
+func GetConfigMapListChannel(client client.Interface, nsQuery *NamespaceQuery,
+	numReads int) ConfigMapListChannel {
+
+	channel := ConfigMapListChannel{
+		List:  make(chan *v1.ConfigMapList, numReads),
+		Error: make(chan error, numReads),
+	}
+
+	go func() {
+		list, err := client.CoreV1().ConfigMaps(nsQuery.ToRequestParam()).List(context.TODO(), helpers.ListEverything)
+		var filteredItems []v1.ConfigMap
+		for _, item := range list.Items {
+			if nsQuery.Matches(item.ObjectMeta.Namespace) {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		list.Items = filteredItems
+		for i := 0; i < numReads; i++ {
+			channel.List <- list
+			channel.Error <- err
+		}
+	}()
+
+	return channel
 }
 
 // SecretListChannel is a list and error channels to Secrets.
