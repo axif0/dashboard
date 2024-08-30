@@ -6,6 +6,7 @@ import _ from 'lodash';
 import { MainLayout } from '@/layout';
 import ErrorBoundary from '@/components/error';
 import Overview from '@/pages/overview';
+import Metrics from '@/pages/metrics';
 import {
   MultiCloudConfig,
   MultiCloudNamespace,
@@ -265,6 +266,15 @@ export function getRoutes() {
               },
             },
           ],
+        },
+        {
+          path: '/metrics',
+          element: <Metrics/>,
+          handle: {
+            sidebarKey: 'Metrics',
+            sidebarName: i18nInstance.t('86385379cf9cfbc2c554944f1c054a45'),
+            icon: <Icons.overview {...IconStyles} />,
+          },
         },
       ],
     },

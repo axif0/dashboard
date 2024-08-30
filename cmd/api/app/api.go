@@ -25,6 +25,8 @@ import (
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/propagationpolicy"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/statefulset"
 	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/unstructured"
+	_ "github.com/karmada-io/dashboard/cmd/api/app/routes/metrics"
+	
 )
 
 // NewApiCommand creates a *cobra.Command object with default parameters
