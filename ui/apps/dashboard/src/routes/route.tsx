@@ -272,7 +272,7 @@ export function getRoutes() {
           element: <Metrics/>,
           handle: {
             sidebarKey: 'Metrics',
-            sidebarName: i18nInstance.t('86385379cf9cfbc2c554944f1c054a45'),
+            sidebarName: 'Metrics',
             icon: <Icons.overview {...IconStyles} />,
           },
         },

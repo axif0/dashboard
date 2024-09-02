@@ -1,0 +1,45 @@
+{
+    "karmada-scheduler": {
+      "schedule_attempts_total": {"Name": "schedule_attempts_total", "Type": "Counter"},
+      "e2e_scheduling_duration_seconds": {"Name": "e2e_scheduling_duration_seconds", "Type": "Histogram"},
+      "scheduling_algorithm_duration_seconds": {"Name": "scheduling_algorithm_duration_seconds", "Type": "Histogram"},
+      "queue_incoming_bindings_total": {"Name": "queue_incoming_bindings_total", "Type": "Counter"},
+      "framework_extension_point_duration_seconds": {"Name": "framework_extension_point_duration_seconds", "Type": "Histogram"},
+      "plugin_execution_duration_seconds": {"Name": "plugin_execution_duration_seconds", "Type": "Histogram"},
+      "estimating_request_total": {"Name": "estimating_request_total", "Type": "Counter"},
+      "estimating_algorithm_duration_seconds": {"Name": "estimating_algorithm_duration_seconds", "Type": "Histogram"}
+    },
+    "karmada-controller-manager": {
+      "cluster_ready_state": {"Name": "cluster_ready_state", "Type": "Gauge"},
+      "cluster_node_number": {"Name": "cluster_node_number", "Type": "Gauge"},
+      "cluster_ready_node_number": {"Name": "cluster_ready_node_number", "Type": "Gauge"},
+      "cluster_memory_allocatable_bytes": {"Name": "cluster_memory_allocatable_bytes", "Type": "Gauge"},
+      "cluster_cpu_allocatable_number": {"Name": "cluster_cpu_allocatable_number", "Type": "Gauge"},
+      "cluster_pod_allocatable_number": {"Name": "cluster_pod_allocatable_number", "Type": "Gauge"},
+      "cluster_memory_allocated_bytes": {"Name": "cluster_memory_allocated_bytes", "Type": "Gauge"},
+      "cluster_cpu_allocated_number": {"Name": "cluster_cpu_allocated_number", "Type": "Gauge"},
+      "cluster_pod_allocated_number": {"Name": "cluster_pod_allocated_number", "Type": "Gauge"},
+      "cluster_sync_status_duration_seconds": {"Name": "cluster_sync_status_duration_seconds", "Type": "Histogram"},
+      "resource_match_policy_duration_seconds": {"Name": "resource_match_policy_duration_seconds", "Type": "Histogram"},
+      "resource_apply_policy_duration_seconds": {"Name": "resource_apply_policy_duration_seconds", "Type": "Histogram"},
+      "policy_apply_attempts_total": {"Name": "policy_apply_attempts_total", "Type": "Counter"},
+      "binding_sync_work_duration_seconds": {"Name": "binding_sync_work_duration_seconds", "Type": "Histogram"},
+      "work_sync_workload_duration_seconds": {"Name": "work_sync_workload_duration_seconds", "Type": "Histogram"},
+      "policy_preemption_total": {"Name": "policy_preemption_total", "Type": "Counter"},
+      "cronfederatedhpa_process_duration_seconds": {"Name": "cronfederatedhpa_process_duration_seconds", "Type": "Histogram"},
+      "cronfederatedhpa_rule_process_duration_seconds": {"Name": "cronfederatedhpa_rule_process_duration_seconds", "Type": "Histogram"},
+      "federatedhpa_process_duration_seconds": {"Name": "federatedhpa_process_duration_seconds", "Type": "Histogram"},
+      "federatedhpa_pull_metrics_duration_seconds": {"Name": "federatedhpa_pull_metrics_duration_seconds", "Type": "Histogram"}
+    },
+    "karmada-agent": {
+      "cluster_ready_node_number": {"Name": "cluster_ready_node_number", "Type": "Gauge"},
+      "cluster_pod_allocatable_number": {"Name": "cluster_pod_allocatable_number", "Type": "Gauge"},
+      "cluster_cpu_allocated_number": {"Name": "cluster_cpu_allocated_number", "Type": "Gauge"},
+      "cluster_pod_allocated_number": {"Name": "cluster_pod_allocated_number", "Type": "Gauge"},
+      "work_sync_workload_duration_seconds": {"Name": "work_sync_workload_duration_seconds", "Type": "Histogram"}
+    },
+    "karmada-scheduler-estimator-member1":{},
+    "karmada-scheduler-estimator-member2":{},
+    "karmada-scheduler-estimator-member3":{}
+  }
+  

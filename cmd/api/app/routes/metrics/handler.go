@@ -4,28 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os/exec"
 	"strings"
 
-	kubeclient "k8s.io/client-go/kubernetes"
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
 	"github.com/karmada-io/dashboard/pkg/client"
 	"github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubeclient "k8s.io/client-go/kubernetes"
 )
 
 const (
-	namespace               = "karmada-system"
-	karmadaAgent            = "karmada-agent"
-	karmadaScheduler        = "karmada-scheduler"
+	namespace                 = "karmada-system"
+	karmadaAgent              = "karmada-agent"
+	karmadaScheduler          = "karmada-scheduler"
 	karmadaSchedulerEstimator = "karmada-scheduler-estimator"
-	karmadaControllerManager = "karmada-controller-manager"
-	schedulerPort           = "10351"
-	controllerManagerPort   = "8080"
+	karmadaControllerManager  = "karmada-controller-manager"
+	schedulerPort             = "10351"
+	controllerManagerPort     = "8080"
 )
 
 type PodInfo struct {
@@ -33,19 +32,16 @@ type PodInfo struct {
 }
 
 func getMetrics(c *gin.Context) {
-	appName := c.Param("app_name")
-	podName := c.Param("pod_name")
-	referenceName := c.Param("referenceName")
+	appName, podName, referenceName := c.Param("app_name"), c.Param("pod_name"), c.Param("referenceName")
+	kubeClient := client.InClusterClient()
 
 	if appName == karmadaAgent {
 		getKarmadaAgentMetrics(c, podName, referenceName)
 		return
 	}
-	kubeClient := client.InClusterClient()
 
 	pod, err := kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
-		log.Printf("Error getting pod %s: %v\n", podName, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Pod not found"})
 		return
 	}
@@ -61,10 +57,8 @@ func getMetrics(c *gin.Context) {
 		return
 	}
 
-	// Convert kubeClient to *kubeclient.Clientset before passing
 	metricsOutput, err := fetchPodMetrics(kubeClient.(*kubeclient.Clientset), podName, port)
 	if err != nil {
-		log.Printf("Error executing metrics request for pod %s: %v\n", podName, err)
 		c.String(http.StatusInternalServerError, fmt.Sprintf("Failed to retrieve metrics from pod: %v", err))
 		return
 	}
@@ -74,10 +68,12 @@ func getMetrics(c *gin.Context) {
 }
 
 func getAppPort(appName string) string {
-	switch appName {
-	case karmadaScheduler, karmadaSchedulerEstimator:
+	switch {
+	case strings.HasPrefix(appName, karmadaScheduler):
 		return schedulerPort
-	case karmadaControllerManager:
+	case strings.HasPrefix(appName, karmadaSchedulerEstimator):
+		return schedulerPort
+	case appName == karmadaControllerManager:
 		return controllerManagerPort
 	default:
 		return ""
@@ -151,13 +147,13 @@ func getClusterPods(cluster *v1alpha1.Cluster) ([]PodInfo, error) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute kubectl command for cluster %s: %v\nCommand: %s\nOutput: %s", 
+		return nil, fmt.Errorf("failed to execute kubectl command for cluster %s: %v\nCommand: %s\nOutput: %s",
 			cluster.Name, err, cmdStr, string(output))
 	}
 
 	var podList corev1.PodList
 	if err := json.Unmarshal(output, &podList); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal pod list for cluster %s: %v\nOutput: %s", 
+		return nil, fmt.Errorf("failed to unmarshal pod list for cluster %s: %v\nOutput: %s",
 			cluster.Name, err, string(output))
 	}
 
@@ -166,64 +162,66 @@ func getClusterPods(cluster *v1alpha1.Cluster) ([]PodInfo, error) {
 	var podInfos []PodInfo
 	for _, pod := range podList.Items {
 		podInfos = append(podInfos, PodInfo{
-			Name:        pod.Name,
+			Name: pod.Name,
 		})
 	}
 
 	return podInfos, nil
 }
 
-func getKarmadaAgentPods(c *gin.Context) {
-	kubeClient := client.InClusterKarmadaClient()
+func getKarmadaPods(c *gin.Context) {
+	appName := c.Param("app_name")
+	kubeClient := client.InClusterClient()
 
-	clusters, err := kubeClient.ClusterV1alpha1().Clusters().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to list clusters: %v", err)})
-		return
-	}
-
-	var agentPods []PodInfo
+	podsMap := make(map[string][]PodInfo)
 	var errors []string
-	var pods string
 
-	for _, cluster := range clusters.Items {
-		if strings.EqualFold(string(cluster.Spec.SyncMode), "Pull") {
-			karmadaConfig, _, err := client.GetKarmadaConfig()
-			if err != nil {
-				errors = append(errors, fmt.Sprintf("Error getting Karmada config for cluster %s: %v", cluster.Name, err))
-				continue
+	if appName == karmadaAgent {
+		karmadaClient := client.InClusterKarmadaClient()
+		clusters, err := karmadaClient.ClusterV1alpha1().Clusters().List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to list clusters: %v", err)})
+			return
+		}
+
+		for _, cluster := range clusters.Items {
+			if strings.EqualFold(string(cluster.Spec.SyncMode), "Pull") {
+				pods, err := getClusterPods(&cluster)
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("Cluster %s: %v", cluster.Name, err))
+				} else {
+					podsMap[cluster.Name] = pods
+				}
 			}
+		}
+	} else {
+		pods, err := kubeClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("app=%s", appName),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to list pods: %v", err)})
+			return
+		}
 
-			fmt.Printf("Karmada config for cluster %s: %+v\n", cluster.Name, karmadaConfig)
-
-			pods, err := getClusterPods(&cluster)
-			if err != nil {
-				errors = append(errors, fmt.Sprintf("Cluster %s: %v", cluster.Name, err))
-			} else {
-				agentPods = append(agentPods, pods...)
-			}
+		for _, pod := range pods.Items {
+			podsMap[appName] = append(podsMap[appName], PodInfo{Name: pod.Name})
 		}
 	}
 
-	if len(agentPods) == 0 {
-		if len(errors) > 0 {
-			c.JSON(500, gin.H{"errors": errors})
-		} else {
-			c.JSON(200, gin.H{
-				"pods": pods,
-				"errors": []string{},  
-			})
-		}
+	if len(podsMap) == 0 && len(errors) > 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"errors": errors})
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"pods":   agentPods,
-	})
+		c.JSON(http.StatusOK, gin.H{appName: podsMap})
+
 }
 
 func init() {
 	r := router.V1()
 	r.GET("/metrics/:app_name/:pod_name/:referenceName", getMetrics)
-	r.GET("/karmadagentpods", getKarmadaAgentPods)
+
+	r.GET("/pods/:app_name", getKarmadaPods)
 }
+
+ 
