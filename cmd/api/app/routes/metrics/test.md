@@ -15,7 +15,7 @@ import (
 // getMetrics retrieves metrics from the specified pod and returns it as a JSON response.
 func getMetrics(c *gin.Context) {
 	// Specify the kubeconfig file and context
-	kubeconfig := "/home/asif/.kube/karmada.config"
+	kubeconfig := "/home/ubuntu/.kube/karmada.config"
 	context := "karmada-host"
 
 	// Get the list of pods with the label app=karmada-controller-manager

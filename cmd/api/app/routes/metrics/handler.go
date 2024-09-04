@@ -2,19 +2,23 @@ package metrics
 
 import (
 	"context"
-	"encoding/json"
+	// "encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
 	"github.com/karmada-io/dashboard/pkg/client"
 	"github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
+	// corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
 )
 
 const (
@@ -142,19 +146,30 @@ func getKarmadaAgentMetrics(c *gin.Context, podName, referenceName string) {
 func getClusterPods(cluster *v1alpha1.Cluster) ([]PodInfo, error) {
 	fmt.Printf("Getting pods for cluster: %s\n", cluster.Name)
 
-	cmdStr := fmt.Sprintf("kubectl get --kubeconfig ~/.kube/karmada.config --raw /apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy/api/v1/namespaces/karmada-system/pods/", cluster.Name)
-	cmd := exec.Command("sh", "-c", cmdStr)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute kubectl command for cluster %s: %v\nCommand: %s\nOutput: %s",
-			cluster.Name, err, cmdStr, string(output))
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user home directory: %v", err)
+		}
+		kubeconfigPath = filepath.Join(homeDir, ".kube", "karmada.config")
 	}
 
-	var podList corev1.PodList
-	if err := json.Unmarshal(output, &podList); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal pod list for cluster %s: %v\nOutput: %s",
-			cluster.Name, err, string(output))
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config for cluster %s: %v", cluster.Name, err)
+	}
+
+	config.Host = fmt.Sprintf("%s/apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy", config.Host, cluster.Name)
+
+	kubeClient, err := kubeclient.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubeclient for cluster %s: %v", cluster.Name, err)
+	}
+
+	podList, err := kubeClient.CoreV1().Pods("karmada-system").List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods for cluster %s: %v", cluster.Name, err)
 	}
 
 	fmt.Printf("Found %d pods in cluster %s\n", len(podList.Items), cluster.Name)
@@ -224,4 +239,3 @@ func init() {
 	r.GET("/pods/:app_name", getKarmadaPods)
 }
 
- 
