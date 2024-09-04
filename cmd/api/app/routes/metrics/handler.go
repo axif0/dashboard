@@ -5,7 +5,7 @@ import (
 	// "encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
+
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,16 +131,53 @@ func getKarmadaAgentMetrics(c *gin.Context, podName, referenceName string) {
 		return
 	}
 
-	cmdStr := fmt.Sprintf("kubectl get --kubeconfig ~/.kube/karmada.config --raw /apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy/api/v1/namespaces/karmada-system/pods/%s:8080/proxy/metrics | grep %s", clusterName, podName, referenceName)
-	cmd := exec.Command("sh", "-c", cmdStr)
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get user home directory: %v", err)})
+			return
+		}
+		kubeconfigPath = filepath.Join(homeDir, ".kube", "karmada.config")
+	}
 
-	output, err := cmd.CombinedOutput()
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to execute command: %v\nOutput: %s", err, string(output))})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to build config for cluster %s: %v", clusterName, err)})
 		return
 	}
 
-	c.Data(http.StatusOK, "text/plain", output)
+	config.Host = fmt.Sprintf("%s/apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy", config.Host, clusterName)
+
+	// Create a REST client specifically for accessing the metrics endpoint
+	restClient, err := kubeclient.NewForConfig(config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create REST client for cluster %s: %v", clusterName, err)})
+		return
+	}
+
+	// Fetch metrics directly using the REST client
+	result := restClient.CoreV1().RESTClient().Get().
+		Namespace("karmada-system").
+		Resource("pods").
+		SubResource("proxy").
+		Name(fmt.Sprintf("%s:8080", podName)).
+		Suffix("metrics").
+		Do(context.TODO())
+
+	if result.Error() != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to retrieve metrics: %v", result.Error())})
+		return
+	}
+
+	metricsOutput, err := result.Raw()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to decode metrics response: %v", err)})
+		return
+	}
+
+	filteredMetrics := filterMetrics(string(metricsOutput), referenceName)
+	c.Data(http.StatusOK, "text/plain", []byte(filteredMetrics))
 }
 
 func getClusterPods(cluster *v1alpha1.Cluster) ([]PodInfo, error) {
