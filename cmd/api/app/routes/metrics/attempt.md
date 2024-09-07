@@ -2,21 +2,21 @@ package metrics
 
 import (
 	"context"
-	// "encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"strings"
+	"bufio"
+	"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
 	"github.com/karmada-io/dashboard/pkg/client"
 	"github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
-	// corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-
 )
 
 const (
@@ -31,6 +31,18 @@ const (
 
 type PodInfo struct {
 	Name string `json:"name"`
+}
+
+type Metric struct {
+	Name   string            `json:"name"`
+	Help   string            `json:"help"`
+	Type   string            `json:"type"`
+	Values []MetricValue     `json:"values,omitempty"`
+}
+
+type MetricValue struct {
+	Labels map[string]string `json:"labels,omitempty"`
+	Value  string            `json:"value"`
 }
 
 func getMetrics(c *gin.Context) {
@@ -66,7 +78,12 @@ func getMetrics(c *gin.Context) {
 	}
 
 	filteredMetrics := filterMetrics(string(metricsOutput), referenceName)
-	c.Data(http.StatusOK, "text/plain", []byte(filteredMetrics))
+	jsonMetrics, err := parseMetricsToJSON(filteredMetrics)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", []byte(jsonMetrics))
 }
 
 func getAppPort(appName string) string {
@@ -129,22 +146,73 @@ func getKarmadaAgentMetrics(c *gin.Context, podName, referenceName string) {
 		return
 	}
 
-	cmdStr := fmt.Sprintf("kubectl get --kubeconfig ~/.kube/karmada.config --raw /apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy/api/v1/namespaces/karmada-system/pods/%s:8080/proxy/metrics | grep %s", clusterName, podName, referenceName)
-	cmd := exec.Command("sh", "-c", cmdStr)
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get user home directory: %v", err)})
+			return
+		}
+		kubeconfigPath = filepath.Join(homeDir, ".kube", "karmada.config")
+	}
 
-	output, err := cmd.CombinedOutput()
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to execute command: %v\nOutput: %s", err, string(output))})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to build config for cluster %s: %v", clusterName, err)})
 		return
 	}
 
-	c.Data(http.StatusOK, "text/plain", output)
+	config.Host = fmt.Sprintf("%s/apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy", config.Host, clusterName)
+
+	// Create a REST client specifically for accessing the metrics endpoint
+	restClient, err := kubeclient.NewForConfig(config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create REST client for cluster %s: %v", clusterName, err)})
+		return
+	}
+
+	// Fetch metrics directly using the REST client
+	result := restClient.CoreV1().RESTClient().Get().
+		Namespace("karmada-system").
+		Resource("pods").
+		SubResource("proxy").
+		Name(fmt.Sprintf("%s:8080", podName)).
+		Suffix("metrics").
+		Do(context.TODO())
+
+	if result.Error() != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to retrieve metrics: %v", result.Error())})
+		return
+	}
+
+	metricsOutput, err := result.Raw()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to decode metrics response: %v", err)})
+		return
+	}
+
+	filteredMetrics := filterMetrics(string(metricsOutput), referenceName)
+	jsonMetrics, err := parseMetricsToJSON(filteredMetrics)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", []byte(jsonMetrics))
 }
 
 func getClusterPods(cluster *v1alpha1.Cluster) ([]PodInfo, error) {
 	fmt.Printf("Getting pods for cluster: %s\n", cluster.Name)
 
-	config, err := clientcmd.BuildConfigFromFlags("", "/home/ubuntu/.kube/karmada.config")
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user home directory: %v", err)
+		}
+		kubeconfigPath = filepath.Join(homeDir, ".kube", "karmada.config")
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config for cluster %s: %v", cluster.Name, err)
 	}
@@ -217,8 +285,67 @@ func getKarmadaPods(c *gin.Context) {
 		return
 	}
 
-		c.JSON(http.StatusOK, gin.H{appName: podsMap})
+	c.JSON(http.StatusOK, gin.H{appName: podsMap})
+}
 
+func parseMetricsToJSON(metricsOutput string) (string, error) {
+	scanner := bufio.NewScanner(strings.NewReader(metricsOutput))
+	metrics := make(map[string]*Metric)
+	var currentMetric *Metric
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "# HELP") {
+			parts := strings.SplitN(line, " ", 4)
+			if len(parts) >= 4 {
+				currentMetric = &Metric{
+					Name: parts[2],
+					Help: parts[3],
+				}
+				metrics[currentMetric.Name] = currentMetric
+			}
+		} else if strings.HasPrefix(line, "# TYPE") {
+			parts := strings.SplitN(line, " ", 4)
+			if len(parts) >= 4 && currentMetric != nil {
+				currentMetric.Type = parts[3]
+			}
+		} else if !strings.HasPrefix(line, "#") && currentMetric != nil {
+			parts := strings.SplitN(line, " ", 2)
+			if len(parts) == 2 {
+				labelsPart := strings.SplitN(parts[0], "{", 2)
+				var labels map[string]string
+				if len(labelsPart) > 1 {
+					labels = parseLabels(labelsPart[1])
+				}
+				currentMetric.Values = append(currentMetric.Values, MetricValue{
+					Labels: labels,
+					Value:  parts[1],
+				})
+			}
+		}
+	}
+
+	jsonData, err := json.MarshalIndent(metrics, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	return string(jsonData), nil
+}
+
+func parseLabels(labelsString string) map[string]string {
+	labels := make(map[string]string)
+	labelsString = strings.TrimRight(labelsString, "}")
+	pairs := strings.Split(labelsString, ",")
+	for _, pair := range pairs {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) == 2 {
+			key := strings.TrimSpace(kv[0])
+			value := strings.Trim(strings.TrimSpace(kv[1]), "\"")
+			labels[key] = value
+		}
+	}
+	return labels
 }
 
 func init() {

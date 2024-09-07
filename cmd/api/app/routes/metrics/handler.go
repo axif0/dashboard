@@ -2,23 +2,20 @@ package metrics
 
 import (
 	"context"
-	// "encoding/json"
 	"fmt"
 	"net/http"
-
 	"os"
 	"path/filepath"
 	"strings"
+ 
 
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
 	"github.com/karmada-io/dashboard/pkg/client"
 	"github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
-	// corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-
 )
 
 const (
@@ -34,6 +31,8 @@ const (
 type PodInfo struct {
 	Name string `json:"name"`
 }
+
+ 
 
 func getMetrics(c *gin.Context) {
 	appName, podName, referenceName := c.Param("app_name"), c.Param("pod_name"), c.Param("referenceName")
@@ -67,8 +66,20 @@ func getMetrics(c *gin.Context) {
 		return
 	}
 
-	filteredMetrics := filterMetrics(string(metricsOutput), referenceName)
-	c.Data(http.StatusOK, "text/plain", []byte(filteredMetrics))
+	jsonMetrics, err := parseMetricsToJSON(string(metricsOutput))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
+		return
+	}
+
+	// Save the JSON metrics to the database
+	err = saveToDB(appName, podName, jsonMetrics)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save metrics to DB: %v", err)})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", []byte(jsonMetrics))
 }
 
 func getAppPort(appName string) string {
@@ -93,20 +104,7 @@ func fetchPodMetrics(kubeClient *kubeclient.Clientset, podName, port string) ([]
 		Suffix("metrics").
 		Do(context.TODO()).Raw()
 }
-
-func filterMetrics(metricsOutput, referenceName string) string {
-	if referenceName == "" {
-		return metricsOutput
-	}
-	lines := strings.Split(metricsOutput, "\n")
-	var filteredLines []string
-	for _, line := range lines {
-		if strings.Contains(line, referenceName) {
-			filteredLines = append(filteredLines, line)
-		}
-	}
-	return strings.Join(filteredLines, "\n")
-}
+ 
 
 func getKarmadaAgentMetrics(c *gin.Context, podName, referenceName string) {
 	kubeClient := client.InClusterKarmadaClient()
@@ -176,8 +174,19 @@ func getKarmadaAgentMetrics(c *gin.Context, podName, referenceName string) {
 		return
 	}
 
-	filteredMetrics := filterMetrics(string(metricsOutput), referenceName)
-	c.Data(http.StatusOK, "text/plain", []byte(filteredMetrics))
+	jsonMetrics, err := parseMetricsToJSON(string(metricsOutput))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
+		return
+	}
+ 
+	err = saveToDB(karmadaAgent, podName, jsonMetrics)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save metrics to DB: %v", err)})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", []byte(jsonMetrics))
 }
 
 func getClusterPods(cluster *v1alpha1.Cluster) ([]PodInfo, error) {
@@ -265,10 +274,10 @@ func getKarmadaPods(c *gin.Context) {
 		return
 	}
 
-		c.JSON(http.StatusOK, gin.H{appName: podsMap})
-
+	c.JSON(http.StatusOK, gin.H{appName: podsMap})
 }
 
+ 
 func init() {
 	r := router.V1()
 	r.GET("/metrics/:app_name/:pod_name/:referenceName", getMetrics)
