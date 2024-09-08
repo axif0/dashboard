@@ -18,26 +18,18 @@ export interface MetricsCategory {
     [key: string]: MetricInfo;
   }
   
-export interface MetricsData {
-    [key: string]: MetricsCategory;
+  export interface MetricsData {
+    [key: string]: {
+      [key: string]: MetricInfo;
+    };
   }
 
-export async function getPods(appName: string): Promise<PodsResponse> {
+  export async function getMetrics(appName: string): Promise<MetricsCategory> {
     try {
-        const response = await axios.get(`/api/v1/pods/${appName}`);
-        return response.data;
+      const response = await axios.get(`/api/v1/metrics/${appName}`);
+      return response.data;
     } catch (error) {
-        console.error('Failed to fetch pods:', error);
-        throw error;
+      console.error('Failed to fetch metrics:', error);
+      throw error;
     }
-}
-
-export async function getMetrics(appName: string, podName: string, referenceName: string): Promise<string> {
-    try {
-        const response = await axios.get(`/api/v1/metrics/${appName}/${podName}/${referenceName}`);
-        return response.data;
-    } catch (error) {
-        console.error('Failed to fetch metrics:', error);
-        throw error;
-    }
-}
+  }

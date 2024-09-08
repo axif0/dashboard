@@ -98,7 +98,7 @@ func parseLabels(labelsString string) map[string]string {
 	return labels
 }
 
-func saveToDB(appName, podName,   jsonData string) error {
+func saveToDB(appName, podName, jsonData string) error {
     // Sanitize the identifiers for use in SQL
     sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
     sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
@@ -144,20 +144,22 @@ func saveToDB(appName, podName,   jsonData string) error {
         return err
     }
 
-    createTimeLoadTableSQL := `
-        CREATE TABLE IF NOT EXISTS time_load (
+    // Create pod-specific time_load table
+    timeLoadTableName := fmt.Sprintf("%s_time_load", sanitizedPodName)
+    createTimeLoadTableSQL := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS %s (
             time_entry DATETIME PRIMARY KEY
         )
-    `
+    `, timeLoadTableName)
     if _, err = tx.Exec(createTimeLoadTableSQL); err != nil {
-        log.Printf("Error creating time_load table: %v", err)
+        log.Printf("Error creating %s table: %v", timeLoadTableName, err)
         return err
     }
 
     // Insert new time entry
-    insertTimeLoadSQL := `
-        INSERT OR REPLACE INTO time_load (time_entry) VALUES (?)
-    `
+    insertTimeLoadSQL := fmt.Sprintf(`
+        INSERT OR REPLACE INTO %s (time_entry) VALUES (?)
+    `, timeLoadTableName)
     if _, err = tx.Exec(insertTimeLoadSQL, data.CurrentTime); err != nil {
         log.Printf("Error inserting time entry: %v", err)
         return err
@@ -165,11 +167,11 @@ func saveToDB(appName, podName,   jsonData string) error {
 
     // Get the oldest time entry if there are more than 5
     var oldestTime string
-    getOldestTimeSQL := `
-        SELECT time_entry FROM time_load
+    getOldestTimeSQL := fmt.Sprintf(`
+        SELECT time_entry FROM %s
         ORDER BY time_entry DESC
         LIMIT 1 OFFSET 5
-    `
+    `, timeLoadTableName)
     err = tx.QueryRow(getOldestTimeSQL).Scan(&oldestTime)
     if err != nil && err != sql.ErrNoRows {
         log.Printf("Error getting oldest time entry: %v", err)
@@ -179,14 +181,14 @@ func saveToDB(appName, podName,   jsonData string) error {
     // If we have more than 5 entries, delete the oldest ones and their associated metrics
     if oldestTime != "" {
         // Delete old time entries
-        deleteOldTimeSQL := `DELETE FROM time_load WHERE time_entry <= ?`
+        deleteOldTimeSQL := fmt.Sprintf(`DELETE FROM %s WHERE time_entry <= ?`, timeLoadTableName)
         result, err := tx.Exec(deleteOldTimeSQL, oldestTime)
         if err != nil {
             log.Printf("Error deleting old time entries: %v", err)
             return err
         }
         rowsAffected, _ := result.RowsAffected()
-        log.Printf("Deleted %d old time entries", rowsAffected)
+        log.Printf("Deleted %d old time entries from %s", rowsAffected, timeLoadTableName)
 
         // Delete associated metrics
         deleteAssociatedMetricsSQL := fmt.Sprintf(`
@@ -198,7 +200,7 @@ func saveToDB(appName, podName,   jsonData string) error {
             return err
         }
         rowsAffected, _ = result.RowsAffected()
-        log.Printf("Deleted %d associated metrics", rowsAffected)
+        log.Printf("Deleted %d associated metrics from %s", rowsAffected, sanitizedPodName)
     }
 
     // Insert new metrics data
