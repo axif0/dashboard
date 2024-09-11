@@ -7,8 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
- 
-
+	
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
 	"github.com/karmada-io/dashboard/pkg/client"
@@ -43,10 +42,10 @@ func getMetrics(c *gin.Context) {
 	}
 
 	var jsonMetrics string
-	for _, pods := range podsMap {
+	for clusterName, pods := range podsMap {
 		for _, pod := range pods {
 			if appName == karmadaAgent {
-				jsonMetrics, err := getKarmadaAgentMetrics(pod.Name)
+				jsonMetrics, err := getKarmadaAgentMetrics(pod.Name, clusterName)
 				if err != nil {
 					continue
 				}
@@ -57,12 +56,11 @@ func getMetrics(c *gin.Context) {
 					return
 				}
 			} else {
-				port := getAppPort(appName)
-				if port == "" {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid app name"})
-					return
+				port := schedulerPort  
+				if appName == karmadaControllerManager {
+					port = controllerManagerPort
 				}
-
+				
 				metricsOutput, err := kubeClient.CoreV1().RESTClient().Get().
 					Namespace(namespace).
 					Resource("pods").
@@ -74,13 +72,13 @@ func getMetrics(c *gin.Context) {
 				if err != nil {
 					continue
 				}
-
+	 
 				jsonMetrics, err = parseMetricsToJSON(string(metricsOutput))
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
 					return
 				}
-
+		
 				err = saveToDB(appName, pod.Name, jsonMetrics)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save metrics to DB: %v", err)})
@@ -93,37 +91,21 @@ func getMetrics(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", []byte(jsonMetrics))
 }
 
-func getAppPort(appName string) string {
-	switch {
-	case strings.HasPrefix(appName, karmadaScheduler):
-		return schedulerPort
-	case strings.HasPrefix(appName, karmadaSchedulerEstimator):
-		return schedulerPort
-	case appName == karmadaControllerManager:
-		return controllerManagerPort
-	default:
-		return ""
-	}
-}
-
-func getKarmadaAgentMetrics(podName string) (string, error) {
+func getKarmadaAgentMetrics(podName string, clusterName string) (string, error) {
 	kubeClient := client.InClusterKarmadaClient()
 	clusters, err := kubeClient.ClusterV1alpha1().Clusters().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to list clusters: %v", err)
 	}
 
-	var clusterName string
-	found := false
 	for _, cluster := range clusters.Items {
 		if strings.EqualFold(string(cluster.Spec.SyncMode), "Pull") {
 			clusterName = cluster.Name
-			found = true
 			break
 		}
 	}
 
-	if !found {
+	if clusterName=="" {
 		return "", fmt.Errorf("no cluster in 'Pull' mode found")
 	}
 
