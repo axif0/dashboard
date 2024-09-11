@@ -50,6 +50,7 @@ func getMetrics(c *gin.Context) {
 				if err != nil {
 					continue
 				}
+				c.Data(http.StatusOK, "application/json", []byte(jsonMetrics))
 				err = saveToDB(appName, pod.Name, jsonMetrics)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save metrics to DB: %v", err)})
