@@ -150,6 +150,12 @@ func saveToDB(appName, podName, jsonData string) error {
         return err
     }
 
+    
+    if _, err = tx.Exec(fmt.Sprintf(createLabelsTableSQL, sanitizedPodName, sanitizedPodName)); err != nil {
+        log.Printf("Error creating labels table: %v", err)
+        return err
+    }
+
     timeLoadTableName := fmt.Sprintf("%s_time_load", sanitizedPodName)
     if _, err = tx.Exec(fmt.Sprintf(createTimeLoadTableSQL, timeLoadTableName)); err != nil {
         log.Printf("Error creating %s table: %v", timeLoadTableName, err)
@@ -211,18 +217,23 @@ func saveToDB(appName, podName, jsonData string) error {
         }
 
         for _, value := range metricData.Values {
-            labelMap := make(map[string]string)
-            for labelKey, labelValue := range value.Labels {
-                labelMap[labelKey] = labelValue
-            }
-            
-            controller := labelMap["controller"]
-            le := labelMap["le"]
-            
-            _, err = tx.Exec(fmt.Sprintf(insertValueSQL, sanitizedPodName), metricID, "controller", controller, "le", le, value.Value, value.Measure)
+            valueIDResult, err := tx.Exec(fmt.Sprintf("INSERT INTO %s_values (metric_id, value, measure) VALUES (?, ?, ?)", sanitizedPodName), metricID, value.Value, value.Measure)
             if err != nil {
                 log.Printf("Error inserting value for metric %s: %v", metricName, err)
                 return err
+            }
+            valueID, err := valueIDResult.LastInsertId()
+            if err != nil {
+                log.Printf("Error getting last insert ID for value of metric %s: %v", metricName, err)
+                return err
+            }
+
+            for labelKey, labelValue := range value.Labels {
+                _, err = tx.Exec(fmt.Sprintf("INSERT INTO %s_labels (value_id, key, value) VALUES (?, ?, ?)", sanitizedPodName), valueID, labelKey, labelValue)
+                if err != nil {
+                    log.Printf("Error inserting label for value of metric %s: %v", metricName, err)
+                    return err
+                }
             }
         }
     }

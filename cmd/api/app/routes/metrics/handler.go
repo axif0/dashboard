@@ -239,7 +239,10 @@ func getKarmadaPods(appName string) (map[string][]PodInfo, []string) {
 
 func init() {
 	r := router.V1()
-	r.GET("/metrics/:app_name", getMetrics)
-	
-}
+	r.GET("/metrics/:app_name", getMetrics) // get all metrics from karmada
+	r.GET("/metrics/:app_name/:pod_name", queryMetrics) // get metrics from db
+	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada-controller-manager-54d9c78689-s5wnl?type=details&mname=cluster_sync_status_duration_seconds
+	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada_controller_manager_54D9C78689_JG9DM?type=tables
+	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada_controller_manager_54D9C78689_JG9DM?type=mname
+	} 
 

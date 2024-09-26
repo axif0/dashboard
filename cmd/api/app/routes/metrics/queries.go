@@ -15,10 +15,6 @@ const (
         CREATE TABLE IF NOT EXISTS %s_values (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             metric_id INTEGER,
-            controller_key TEXT,
-            controller_value TEXT,
-            le_key TEXT,
-            le_value TEXT,
             value TEXT,
             measure TEXT,
             FOREIGN KEY (metric_id) REFERENCES %s(id)
@@ -55,9 +51,11 @@ const (
         INSERT INTO %s (name, help, type, currentTime) 
         VALUES (?, ?, ?, ?)
     `
-
-    insertValueSQL = `
-        INSERT INTO %s_values (metric_id, controller_key, controller_value, le_key, le_value, value, measure)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `
+    createLabelsTableSQL = `CREATE TABLE IF NOT EXISTS %s_labels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        value_id INTEGER,
+        key TEXT,
+        value TEXT,
+        FOREIGN KEY(value_id) REFERENCES %s_values(id)
+    )`
 )
