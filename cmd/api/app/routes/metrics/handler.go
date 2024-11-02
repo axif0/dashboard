@@ -86,7 +86,7 @@ func getMetrics(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
 					return
 				}
-				fmt.Println("jsonMetrics: ", jsonMetrics) // Debug: log JSON metrics
+				// fmt.Println("jsonMetrics: ", jsonMetrics) // Debug: log JSON metrics
 				err = saveToDB(appName, pod.Name, jsonMetrics)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save metrics to DB: %v", err)})
@@ -252,4 +252,6 @@ func init() {
 	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada-controller-manager-54d9c78689-qhgdl?type=details&mname=cluster_sync_status_duration_seconds
 	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada-controller-manager-54d9c78689-qhgdl?type=tables
 	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada-controller-manager-54d9c78689-k6pfq?type=mname
+	// http://localhost:8000/api/v1/metrics/karmada_controller_manager/karmada-controller-manager-54d9c78689-qhgdl
 	} 
+	

@@ -1,47 +1,17 @@
 package metrics
 
 import (
+ 
     "encoding/json"
     "fmt"
-      "time"
-    "gorm.io/gorm"
-    "strings"
-
     
+    "strings"
+    "time"
     "github.com/prometheus/common/expfmt"
+    
+    _ "github.com/glebarez/sqlite"
 )
-type MetricEntry struct {
-    gorm.Model
-    Name        string
-    Help        string
-    Type        string
-    CurrentTime time.Time
-    Values      []MetricValue
-    AppName     string
-    PodName     string
-}
 
-type MetricValue struct {
-    gorm.Model
-    MetricEntryID uint
-    Value         string
-    Measure       string
-    Labels        []MetricLabel
-}
-
-type MetricLabel struct {
-    gorm.Model
-    MetricValueID uint
-    Key           string
-    Value         string
-}
-
-type TimeLoad struct {
-    gorm.Model
-    TimeEntry time.Time
-    AppName   string
-    PodName   string
-}
 type Metric struct {
     Name   string        `json:"name"`
     Help   string        `json:"help"`
@@ -49,11 +19,11 @@ type Metric struct {
     Values []MetricValue `json:"values,omitempty"`
 }
 
-// type MetricValue struct {
-//     Labels  map[string]string `json:"labels,omitempty"`
-//     Value   string            `json:"value"`
-//     Measure string            `json:"measure"`
-// } 
+type MetricValue struct {
+    Labels  map[string]string `json:"labels,omitempty"`
+    Value   string            `json:"value"`
+    Measure string            `json:"measure"`
+} 
 
 func parseMetricsToJSON(metricsOutput string) (string, error) {
     var parser expfmt.TextParser
@@ -73,26 +43,22 @@ func parseMetricsToJSON(metricsOutput string) (string, error) {
         }
 
         for _, metric := range mf.Metric {
-            labels := make([]MetricLabel, 0)
+            labels := make(map[string]string)
             for _, labelPair := range metric.Label {
-                labels = append(labels, MetricLabel{
-                    Key:   labelPair.GetName(),
-                    Value: labelPair.GetValue(),
-                })
+                labels[labelPair.GetName()] = labelPair.GetValue()
             }
 
             if metric.Histogram != nil {
                 for _, bucket := range metric.Histogram.Bucket {
-                    bucketLabels := make([]MetricLabel, len(labels))
-                    copy(bucketLabels, labels)
-                    bucketLabels = append(bucketLabels, MetricLabel{
-                        Key:   "le",
-                        Value: fmt.Sprintf("%f", bucket.GetUpperBound()),
-                    })
-                    
+                    bucketValue := fmt.Sprintf("%d", bucket.GetCumulativeCount()) 
+                    bucketLabels := make(map[string]string)
+                    for k, v := range labels {
+                        bucketLabels[k] = v
+                    }
+                    bucketLabels["le"] = fmt.Sprintf("%f", bucket.GetUpperBound())
                     m.Values = append(m.Values, MetricValue{
                         Labels:  bucketLabels,
-                        Value:   fmt.Sprintf("%d", bucket.GetCumulativeCount()),
+                        Value:   bucketValue,
                         Measure: "cumulative_count",
                     })
                 }
@@ -103,22 +69,22 @@ func parseMetricsToJSON(metricsOutput string) (string, error) {
                 })
                 m.Values = append(m.Values, MetricValue{
                     Labels:  labels,
-                    Value:   fmt.Sprintf("%d", metric.Histogram.GetSampleCount()),
+                    Value:   fmt.Sprintf("%d", metric.Histogram.GetSampleCount()),  
                     Measure: "count",
                 })
             } else if metric.Counter != nil {
-                value := fmt.Sprintf("%f", metric.Counter.GetValue())
+                value := fmt.Sprintf("%f", metric.Counter.GetValue())  
                 m.Values = append(m.Values, MetricValue{
                     Labels:  labels,
                     Value:   value,
-                    Measure: "total",
+                    Measure: "total", 
                 })
             } else if metric.Gauge != nil {
                 value := fmt.Sprintf("%f", metric.Gauge.GetValue())
                 m.Values = append(m.Values, MetricValue{
                     Labels:  labels,
                     Value:   value,
-                    Measure: "current_value",
+                    Measure: "current_value", 
                 })
             } else {
                 m.Values = append(m.Values, MetricValue{
@@ -145,10 +111,22 @@ func parseMetricsToJSON(metricsOutput string) (string, error) {
 
     return string(jsonData), nil
 }
+
 func saveToDB(appName, podName, jsonData string) error {
-    db, err := getDB(appName)
+    sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
+    sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
+
+    db, err := getDB(sanitizedAppName)
     if err != nil {
-        return err
+        return fmt.Errorf("failed to get database connection: %w", err)
+      
+    }
+    
+
+    // Get cached prepared statements
+    stmts, err := getStatements(db, sanitizedPodName)
+    if err != nil {
+        return fmt.Errorf("failed to get prepared statements: %w", err)
     }
 
     var data struct {
@@ -156,94 +134,58 @@ func saveToDB(appName, podName, jsonData string) error {
         Metrics     map[string]*Metric `json:"metrics"`
     }
     if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
-        return fmt.Errorf("error unmarshaling JSON data: %v", err)
+        return fmt.Errorf("failed to unmarshal JSON: %w", err)
     }
 
-    currentTime, err := time.Parse(time.RFC3339, data.CurrentTime)
+    tx, err := db.Begin()
     if err != nil {
-        return fmt.Errorf("error parsing time: %v", err)
+        return fmt.Errorf("failed to begin transaction: %w", err)
     }
+    defer tx.Rollback()
 
-    // Begin transaction
-    tx := db.Begin()
-    if tx.Error != nil {
-        return tx.Error
-    }
-    defer func() {
-        if r := recover(); r != nil {
-            tx.Rollback()
-        }
-    }()
-
-    // Save time load
-    timeLoad := TimeLoad{
-        TimeEntry: currentTime,
-        AppName:   appName,
-        PodName:   podName,
-    }
-    if err := tx.Create(&timeLoad).Error; err != nil {
-        tx.Rollback()
-        return err
-    }
-
-    // Delete old records
-    var oldestTime TimeLoad
-    if err := tx.Where("app_name = ? AND pod_name = ?", appName, podName).
-        Order("time_entry desc").
-        Offset(5).
-        First(&oldestTime).Error; err == nil {
-        // Delete old metrics
-        if err := tx.Where("current_time <= ? AND app_name = ? AND pod_name = ?", 
-            oldestTime.TimeEntry, appName, podName).
-            Delete(&MetricEntry{}).Error; err != nil {
-            tx.Rollback()
-            return err
-        }
-    }
-
-    // Save new metrics
     for metricName, metricData := range data.Metrics {
-        metricEntry := MetricEntry{
-            Name:        metricName,
-            Help:        metricData.Help,
-            Type:        metricData.Type,
-            CurrentTime: currentTime,
-            AppName:     appName,
-            PodName:     podName,
+        result, err := tx.Stmt(stmts.insertMetric).Exec(
+            metricName, 
+            metricData.Help, 
+            metricData.Type, 
+            data.CurrentTime,
+        )
+        if err != nil {
+            return fmt.Errorf("failed to insert metric %s: %w", metricName, err)
         }
 
-        if err := tx.Create(&metricEntry).Error; err != nil {
-            tx.Rollback()
-            return err
+        metricID, err := result.LastInsertId()
+        if err != nil {
+            return fmt.Errorf("failed to get last insert ID for metric %s: %w", metricName, err)
         }
 
         for _, value := range metricData.Values {
-            metricValue := MetricValue{
-                MetricEntryID: metricEntry.ID,
-                Value:         value.Value,
-                Measure:       value.Measure,
+            valueResult, err := tx.Stmt(stmts.insertValue).Exec(
+                metricID, 
+                value.Value, 
+                value.Measure,
+            )
+            if err != nil {
+                return fmt.Errorf("failed to insert value: %w", err)
             }
 
-            if err := tx.Create(&metricValue).Error; err != nil {
-                tx.Rollback()
-                return err
+            valueID, err := valueResult.LastInsertId()
+            if err != nil {
+                return fmt.Errorf("failed to get value ID: %w", err)
             }
 
-            for _, labelValue := range value.Labels {
-                label := MetricLabel{
-                    MetricValueID: metricValue.ID,
-                    Key:   labelValue.Key,
-                    Value: labelValue.Value,
-                }
-
-                if err := tx.Create(&label).Error; err != nil {
-                    tx.Rollback()
-                    return err
+            for labelKey, labelValue := range value.Labels {
+                _, err = tx.Stmt(stmts.insertLabel).Exec(valueID, labelKey, labelValue)
+                if err != nil {
+                    return fmt.Errorf("failed to insert label: %w", err)
                 }
             }
         }
     }
 
-    return tx.Commit().Error
-}
+    if err = tx.Commit(); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
 
+    return nil
+}

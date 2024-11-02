@@ -8,6 +8,11 @@ node_modules
 .env.local
 .env.*.local
 
+#local sql files
+.db
+.db-shm
+.db-wal
+
 # Log files
 npm-debug.log*
 yarn-debug.log*
