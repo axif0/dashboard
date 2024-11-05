@@ -53,6 +53,7 @@ export const Icons = {
   clusters: Boxes,
   overview: Target,
   resource: FileText,
+  metrics: Target,
   policy: FolderKanban,
   basicConfig: Settings2,
   advancedConfig: SlidersHorizontal,

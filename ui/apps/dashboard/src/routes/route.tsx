@@ -28,6 +28,7 @@ import { BuildInAddon, ThridPartyAddon } from '@/pages/addon';
 import ClusterManage from '@/pages/cluster-manage';
 import Login from '@/pages/login';
 import { Icons } from '@/components/icons';
+import Metrics from '@/pages/metrics';
 
 export interface IRouteObjectHandle {
   icon?: ReactNode;
@@ -71,6 +72,15 @@ export function getRoutes() {
             sidebarKey: 'OVERVIEW',
             sidebarName: i18nInstance.t('86385379cf9cfbc2c554944f1c054a45'),
             icon: <Icons.overview {...IconStyles} />,
+          },
+        },
+        {
+          path: '/metrics',
+          element: <Metrics />,
+          handle: {
+            sidebarKey: 'OVERVIEW',
+            sidebarName: i18nInstance.t('f3a4b2c0b3e6d8e2f83c8efb988a5684'),
+            icon: <Icons.metrics {...IconStyles} />,
           },
         },
         {
@@ -141,8 +151,10 @@ export function getRoutes() {
                 sidebarName: i18nInstance.t('0a7e9443c41575378d2db1e288d3f1cb'),
               },
             },
+           
           ],
         },
+
         {
           path: '/cluster-manage',
           element: <ClusterManage />,
@@ -153,6 +165,7 @@ export function getRoutes() {
             isPage: false,
           },
         },
+        
         {
           path: '/basic-config',
           handle: {
