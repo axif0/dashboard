@@ -159,7 +159,7 @@ func getKarmadaAgentMetrics(podName string, clusterName string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("filed to parse metrics to JSON: %v", err)
 	}
-
+	fmt.Println("jsonMetrics", jsonMetrics)
 	return jsonMetrics, nil
 }
 

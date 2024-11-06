@@ -42,9 +42,40 @@ export interface MetricDetailsResponse {
 }
 
 
-export async function GetMetricsDetails(componentName: string, metricName: string): Promise<MetricDetailsResponse> {
-    console.log("componentName", componentName, "metricName", metricName);
-    const resp = await karmadaClient.get<MetricDetailsResponse>(`/metrics/${componentName}?type=details&mname=${metricName}`);
-    console.log("resp.data", resp.data);
+export async function GetMetricsDetails(componentName: string, podsName: string, metricName: string): Promise<MetricDetailsResponse> {
+    console.log("componentName", componentName, "podsName", podsName, "metricName", metricName);
+    const resp = await karmadaClient.get<MetricDetailsResponse>(`/metrics/${componentName}/${podsName}?type=details&mname=${metricName}`);
+    console.log("resp.data GetMetricsDetails", resp.data);
     return resp.data;
 }
+
+export interface MetricDataResponse {
+    currentTime: string;
+    metrics: {
+        [metricName: string]: {
+            name: string;
+            help: string;
+            type: 'COUNTER' | 'GAUGE' | 'SUMMARY' | 'HISTOGRAM';
+            values: MetricValue[];
+        };
+    };
+}
+
+export async function GetMetricsData(componentName: string): Promise<{ status: number; data?: MetricDataResponse | any }> {
+    console.log("componentName", componentName);
+    const resp = await karmadaClient.get<MetricDataResponse>(`/metrics/${componentName}`);
+    console.log("resp.data GetMetricsData", resp.data);
+
+    if (resp.data && typeof resp.data.currentTime === 'string' && resp.data.metrics) {
+        const isValidMetrics = Object.values(resp.data.metrics).every(metric =>
+            metric.name && metric.help && metric.type && Array.isArray(metric.values)
+        );
+
+        if (isValidMetrics) {
+            return { status: 200 };  
+        }
+    }
+
+
+    return { status: 400, data: resp.data };
+}   

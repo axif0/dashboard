@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Layout, Button, Tabs, Card, Space, Typography, Select, Input, Table } from 'antd';
+import { Layout, Button, Card, Space, Typography, Select, Input, message } from 'antd';
 import Panel from '@/components/panel';
-import { GetMetricsDetails, GetMetricsInfo } from '@/services/metrics';
+import {GetMetricsInfo, GetMetricsData } from '@/services/metrics';
+import Diagram from '@/pages/metrics/diagram';
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
@@ -26,6 +27,7 @@ export default function Component() {
   const [selectedPod, setSelectedPod] = useState<string>('');
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [pods, setPods] = useState<PodOption[]>([]);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const options = [
     'karmada-scheduler-estimator-member1',
@@ -34,18 +36,6 @@ export default function Component() {
     'karmada-controller-manager',
     'karmada-agent',
     'karmada-scheduler',
-  ];
-
-  const graphData = [
-    { time: '00:00', value: 30 },
-    { time: '04:00', value: 50 },
-    { time: '08:00', value: 80 },
-
-  ];
-
-  const columns = [
-    { title: 'Time', dataIndex: 'time', key: 'time' },
-    { title: 'Value', dataIndex: 'value', key: 'value' },
   ];
 
   useEffect(() => {
@@ -101,6 +91,30 @@ export default function Component() {
     setSelectedPod(value);
     setSearchMetric('');
     setSelectedMetric(null);
+  };
+
+  const handleSync = async () => {
+    try {
+      if (selectedOption === '') {
+        message.error('Please select a component');
+        return;
+      } else {    
+        const response = await GetMetricsData(selectedOption);
+        console.log("Sync response:", response);
+
+        if (response.status === 200) {
+          setSyncStatus('success');
+          message.success('Sync successful!');
+          setTimeout(() => setSyncStatus('idle'), 5000); // Reset status after 5 seconds
+        } else {
+          throw new Error('Sync failed with status: ' + response.status);
+        }
+      }
+    } catch (error) {
+      setSyncStatus('error');
+      message.error('Sync failed: ' + (error instanceof Error ? error.message : 'due to an unknown error'));
+      setTimeout(() => setSyncStatus('idle'), 5000); // Reset status after 5 seconds
+    }
   };
 
   return (
@@ -178,28 +192,12 @@ export default function Component() {
               </Card>
             )}
 
-            <Tabs
-              activeKey={activeTab}
-              onChange={key => setActiveTab(key.toString())}
-              items={[
-                {
-                  key: 'graph',
-                  label: 'Graph',
-                  children: (
-                    <div>
-                      <Table dataSource={graphData} columns={columns} pagination={false} />
-                      <Card title="Logs" style={{ marginTop: '16px' }}>
-                        <div style={{ height: '200px', background: '#f5f5f5' }}></div>
-                      </Card>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'query',
-                  label: 'Query',
-                  children: <div style={{ padding: '24px' }}>Query content will go here</div>,
-                },
-              ]}
+            <Diagram
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              componentName={selectedOption}
+              podsName={selectedPod}
+              metricName={selectedMetric ? selectedMetric.name : ''}
             />
           </Space>
         </Sider>
@@ -207,8 +205,18 @@ export default function Component() {
         <Content style={{ padding: '16px', background: '#fff' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
             <Space>
-              <Button>Sync</Button>
-              <Button danger>Delete</Button>
+              {syncStatus === 'success' ? (
+                <Button style={{ color: 'green' }} onClick={handleSync}>
+                  Sync Successful
+                </Button>
+              ) : syncStatus === 'error' ? (
+                <Button style={{ color: 'red' }} onClick={handleSync}>
+                  Sync Failed - Retry?
+                </Button>
+              ) : (
+                <Button onClick={handleSync}>Sync db</Button>
+              )}
+              {/* <Button danger>Delete</Button> */}
             </Space>
           </div>
         </Content>
