@@ -50,13 +50,15 @@ export async function GetMetricsDetails(componentName: string, podsName: string,
 }
 
 export interface MetricDataResponse {
-    currentTime: string;
-    metrics: {
-        [metricName: string]: {
-            name: string;
-            help: string;
-            type: 'COUNTER' | 'GAUGE' | 'SUMMARY' | 'HISTOGRAM';
-            values: MetricValue[];
+    [podName: string]: {
+        currentTime: string;
+        metrics: {
+            [metricName: string]: {
+                name: string;
+                help: string;
+                type: 'COUNTER' | 'GAUGE' | 'SUMMARY' | 'HISTOGRAM';
+                values: MetricValue[];
+            };
         };
     };
 }
@@ -66,16 +68,34 @@ export async function GetMetricsData(componentName: string): Promise<{ status: n
     const resp = await karmadaClient.get<MetricDataResponse>(`/metrics/${componentName}`);
     console.log("resp.data GetMetricsData", resp.data);
 
-    if (resp.data && typeof resp.data.currentTime === 'string' && resp.data.metrics) {
-        const isValidMetrics = Object.values(resp.data.metrics).every(metric =>
-            metric.name && metric.help && metric.type && Array.isArray(metric.values)
-        );
+    let data = resp.data;
 
-        if (isValidMetrics) {
-            return { status: 200 };  
+    if (typeof data === 'string') {
+        try {
+            data = JSON.parse(data);
+        } catch (e) {
+            console.log("string type error", e);
+            return { status: 400, data: resp.data };
         }
     }
 
+    if (data) {
+        const isValidMetrics = Object.values(data).every(podMetrics =>
+            podMetrics.currentTime &&
+            podMetrics.metrics &&
+            typeof podMetrics.metrics === 'object' &&
+            Object.values(podMetrics.metrics).every(metric =>
+                metric.name &&
+                metric.help &&
+                metric.type &&
+                Array.isArray(metric.values)
+            )
+        );
 
-    return { status: 400, data: resp.data };
-}   
+        if (isValidMetrics) {
+            return { status: 200, data };
+        }
+    }
+
+    return { status: 400, data };
+}

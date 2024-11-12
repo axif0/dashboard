@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Tabs, Table, Card, Modal, Button, message } from 'antd';
-import {GetMetricsDetails, MetricDetailsResponse } from '@/services/metrics';
+import { Tabs, Card, Modal, Button } from 'antd';
+import { GetMetricsDetails, MetricDetailsResponse } from '@/services/metrics';
+
 interface MetricTabsProps {
   activeTab: string;
   setActiveTab: (key: string) => void;
@@ -8,68 +9,46 @@ interface MetricTabsProps {
   podsName: string;
   metricName: string;
 }
-const graphData = [
-    { time: '00:00', value: 30 },
-    { time: '04:00', value: 50 },
-    { time: '08:00', value: 80 },
 
-  ];
-
-  const columns = [
-    { title: 'Time', dataIndex: 'time', key: 'time' },
-    { title: 'Value', dataIndex: 'value', key: 'value' },
-  ];
-
-  
 const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName }) => {
   const [visible, setVisible] = useState(false);
   const [logs, setLogs] = useState<MetricDetailsResponse | null>(null);
 
-    const getLogs = async (componentName: string, podsName: string, metricName: string) => {
-       if (!componentName || !podsName || !metricName) {
-        console.error('Missing parameters for fetching metrics details');
-        return; 
-      }
-
-      try {
-        const details = await GetMetricsDetails(componentName, podsName, metricName);
-        console.log('Metrics Details:', details);
-        setLogs(details);
-      } catch (error) {
-        console.error('Failed to fetch metrics details:', error);
-      }
+  const getLogs = async (componentName: string, podsName: string, metricName: string) => {
+    if (!componentName || !podsName || !metricName) {
+      console.error('Missing parameters for fetching metrics details');
+      return; 
     }
- 
-    useEffect(() => {
-      if (componentName && podsName && metricName) {
-        getLogs(componentName, podsName, metricName);
-      } else {
-  
-        setLogs(null);
-      }
-    }, [componentName, podsName, metricName]);  
 
-  // Demo date-time ranges
-  const dateTimeRanges = [
-    '2024-11-05T22:59:52+07:00',
-    '2024-11-06T23:00:53+08:00',
-    '2024-11-07T00:01:54+09:00',
-    '2024-11-07T01:02:55+10:00',
-    '2024-11-07T02:03:56+11:00'
-  ];
+    try {
+      const details = await GetMetricsDetails(componentName, podsName, metricName);
+      console.log('Metrics Details:', details);
+      setLogs(details);
+    } catch (error) {
+      console.error('Failed to fetch metrics details:', error);
+    }
+  };
+  
+  useEffect(() => {
+    if (componentName && podsName && metricName) {
+      getLogs(componentName, podsName, metricName);
+    } else {
+      setLogs(null);
+    }
+  }, [componentName, podsName, metricName]);  
 
   const showModal = () => {
     setVisible(true);
   };
 
   const handleDelete = (range: string) => {
- 
     console.log(`Deleting range: ${range}`);
+    // Implement deletion logic here if needed
   };
 
   return (
     <div>
-        <Button type="primary" onClick={showModal} style={{ float: 'right', marginBottom: '16px' }}>
+      <Button type="primary" onClick={showModal} style={{ float: 'right', marginBottom: '16px' }}>
         View Date-Time Ranges
       </Button>
       <Modal
@@ -79,14 +58,17 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
         onCancel={() => setVisible(false)}
         footer={null}
       >
-        {dateTimeRanges.map((range, index) => (
-          <div key={index} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <span>{range}</span>
-            <Button type="link" onClick={() => handleDelete(range)}>
-              Delete
-            </Button>
-          </div>
-        ))}
+        {logs && logs.details
+          ? Object.keys(logs.details).map((range, index) => (
+              <div key={index} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <span>{range}</span>
+                <Button type="link" onClick={() => handleDelete(range)}>
+                  Delete
+                </Button>
+              </div>
+            ))
+          : <p>No time ranges available</p>
+        }
       </Modal>
       <Tabs
         activeKey={activeTab}
@@ -114,7 +96,6 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
           },
         ]}
       />
-     
     </div>
   );
 };

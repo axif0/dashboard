@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout, Button, Card, Space, Typography, Select, Input, message } from 'antd';
 import Panel from '@/components/panel';
-import {GetMetricsInfo, GetMetricsData } from '@/services/metrics';
+import { GetMetricsInfo, GetMetricsData } from '@/services/metrics';
 import Diagram from '@/pages/metrics/diagram';
 
 const { Sider, Content } = Layout;
@@ -21,10 +21,17 @@ interface PodOption {
 
 export default function Component() {
   const [activeTab, setActiveTab] = useState<string>('graph');
-  const [selectedOption, setSelectedOption] = useState<string>('');
+  const [selectedOption, setSelectedOption] = useState<string>(() => {
+    return localStorage.getItem('selectedOption') || '';
+  });
   const [searchMetric, setSearchMetric] = useState<string>('');
-  const [selectedMetric, setSelectedMetric] = useState<Metric | null>(null);
-  const [selectedPod, setSelectedPod] = useState<string>('');
+  const [selectedMetric, setSelectedMetric] = useState<Metric | null>(() => {
+    const savedMetric = localStorage.getItem('selectedMetric');
+    return savedMetric ? JSON.parse(savedMetric) : null;
+  });
+  const [selectedPod, setSelectedPod] = useState<string>(() => {
+    return localStorage.getItem('selectedPod') || '';
+  });
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [pods, setPods] = useState<PodOption[]>([]);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -38,38 +45,54 @@ export default function Component() {
     'karmada-scheduler',
   ];
 
+  const fetchMetrics = async () => {
+    if (!selectedOption) return;
+    
+    console.log("Fetching metrics for option:", selectedOption);
+    try {
+      const data = await GetMetricsInfo(selectedOption, 'metricsdetails');
+      console.log("Metrics data received:", data);
+
+      const fetchedMetrics = Object.entries(data).flatMap(([clusterName, clusterMetrics]) =>
+        Object.entries(clusterMetrics).map(([metricName, metricInfo]) => ({
+          name: metricName,
+          type: metricInfo.type,
+          help: metricInfo.help
+        }))
+      );
+      setMetrics(fetchedMetrics);
+      console.log("Processed metrics:", fetchedMetrics);
+
+      const fetchedPods = Object.keys(data).map(clusterName => ({
+        id: clusterName,
+        name: clusterName.replace(/_/g, ' ')
+      }));
+      setPods(fetchedPods);
+      console.log("Processed pods:", fetchedPods);
+    } catch (error) {
+      console.error('Failed to fetch metrics:', error);
+    }
+  };
+
   useEffect(() => {
-    const fetchMetrics = async () => {
-      if (!selectedOption) return;
-      
-      console.log("Fetching metrics for option:", selectedOption);
-      try {
-        const data = await GetMetricsInfo(selectedOption, 'metricsdetails');
-        console.log("Metrics data received:", data);
-
-        const fetchedMetrics = Object.entries(data).flatMap(([clusterName, clusterMetrics]) =>
-          Object.entries(clusterMetrics).map(([metricName, metricInfo]) => ({
-            name: metricName,
-            type: metricInfo.type,
-            help: metricInfo.help
-          }))
-        );
-        setMetrics(fetchedMetrics);
-        console.log("Processed metrics:", fetchedMetrics);
-
-        const fetchedPods = Object.keys(data).map(clusterName => ({
-          id: clusterName,
-          name: clusterName.replace(/_/g, ' ')
-        }));
-        setPods(fetchedPods);
-        console.log("Processed pods:", fetchedPods);
-      } catch (error) {
-        console.error('Failed to fetch metrics:', error);
-      }
-    };
-
     fetchMetrics();
   }, [selectedOption]);
+
+  useEffect(() => {
+    localStorage.setItem('selectedOption', selectedOption);
+  }, [selectedOption]);
+
+  useEffect(() => {
+    localStorage.setItem('selectedPod', selectedPod);
+  }, [selectedPod]);
+
+  useEffect(() => {
+    if (selectedMetric) {
+      localStorage.setItem('selectedMetric', JSON.stringify(selectedMetric));
+    } else {
+      localStorage.removeItem('selectedMetric');
+    }
+  }, [selectedMetric]);
 
   const filteredMetrics = metrics.filter(metric => 
     metric.name.toLowerCase().includes(searchMetric.toLowerCase())
@@ -105,6 +128,7 @@ export default function Component() {
         if (response.status === 200) {
           setSyncStatus('success');
           message.success('Sync successful!');
+          fetchMetrics(); // Fetch the updated metrics and pods
           setTimeout(() => setSyncStatus('idle'), 5000); // Reset status after 5 seconds
         } else {
           throw new Error('Sync failed with status: ' + response.status);

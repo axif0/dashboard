@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
- 
 )
 
 type PodInfo struct {
@@ -21,7 +21,6 @@ type MetricInfo struct {
     Help string `json:"help"`
     Type string `json:"type"`
 }
-
 
 func queryMetrics(c *gin.Context) {
 	appName := c.Param("app_name")
@@ -39,8 +38,6 @@ func queryMetrics(c *gin.Context) {
 		return
 	}
 	defer db.Close()
-
- 
 
 	switch queryType {
 	case "mname":
@@ -62,7 +59,7 @@ func queryMetrics(c *gin.Context) {
 			}
 			metricNames = append(metricNames, metricName)
 		}
- 
+
 		c.JSON(http.StatusOK, gin.H{ "metricNames": metricNames})
 
 	case "details":
@@ -112,7 +109,6 @@ func queryMetrics(c *gin.Context) {
 				return
 			}
 
-			 
 			labelsQuery := fmt.Sprintf("SELECT key, value FROM %s_labels WHERE value_id = ?", sanitizedPodName)
 			labelsRows, err := db.Query(labelsQuery, valueID)
 			if err != nil {
@@ -224,8 +220,5 @@ func queryMetrics(c *gin.Context) {
 
 		c.JSON(http.StatusOK, result)
 		return
-	
-	
-
 	}
 }
