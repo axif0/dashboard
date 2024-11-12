@@ -8,9 +8,10 @@ interface MetricTabsProps {
   componentName: string;
   podsName: string;
   metricName: string;
+  lastUpdated: number; // New prop
 }
 
-const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName }) => {
+const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName, lastUpdated }) => {
   const [visible, setVisible] = useState(false);
   const [logs, setLogs] = useState<MetricDetailsResponse | null>(null);
 
@@ -26,6 +27,7 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
       setLogs(details);
     } catch (error) {
       console.error('Failed to fetch metrics details:', error);
+      setLogs(null); // Optionally clear logs on error
     }
   };
   
@@ -35,7 +37,7 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
     } else {
       setLogs(null);
     }
-  }, [componentName, podsName, metricName]);  
+  }, [componentName, podsName, metricName, lastUpdated]); // Added lastUpdated
 
   const showModal = () => {
     setVisible(true);

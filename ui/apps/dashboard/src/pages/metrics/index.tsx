@@ -35,6 +35,7 @@ export default function Component() {
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [pods, setPods] = useState<PodOption[]>([]);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [lastUpdated, setLastUpdated] = useState<number>(0); // New state
 
   const options = [
     'karmada-scheduler-estimator-member1',
@@ -63,14 +64,15 @@ export default function Component() {
       setMetrics(fetchedMetrics);
       console.log("Processed metrics:", fetchedMetrics);
 
-      const fetchedPods = Object.keys(data).map(clusterName => ({
-        id: clusterName,
-        name: clusterName.replace(/_/g, ' ')
+      const fetchedPods = Object.keys(data).map(podName => ({
+        id: podName,
+        name: podName.replace(/_/g, ' ')
       }));
       setPods(fetchedPods);
       console.log("Processed pods:", fetchedPods);
     } catch (error) {
       console.error('Failed to fetch metrics:', error);
+      message.error('Failed to fetch metrics');
     }
   };
 
@@ -104,6 +106,7 @@ export default function Component() {
   };
 
   const handleOptionChange = (value: string) => {
+    console.log(`Changing component from ${selectedOption} to ${value}`);
     setSelectedOption(value);
     setSelectedPod('');
     setSearchMetric('');
@@ -128,7 +131,8 @@ export default function Component() {
         if (response.status === 200) {
           setSyncStatus('success');
           message.success('Sync successful!');
-          fetchMetrics(); // Fetch the updated metrics and pods
+          await fetchMetrics(); // Ensure fetchMetrics completes
+          setLastUpdated(Date.now()); // Update lastUpdated
           setTimeout(() => setSyncStatus('idle'), 5000); // Reset status after 5 seconds
         } else {
           throw new Error('Sync failed with status: ' + response.status);
@@ -147,8 +151,10 @@ export default function Component() {
         <Sider width={800} style={{ background: '#fff', padding: '16px' }}>
           <Space direction="vertical" style={{ width: '100%' }} size="small">
             {/* Selection Controls */}
-            <div style={{ display: 'flex'}}>
+            <div style={{ display: 'flex' }}>
               <Select
+                allowClear
+                key={`component-select`} // Optional: unique key if needed
                 style={{ width: '200px' }}
                 placeholder="Select Option"
                 value={selectedOption}
@@ -161,6 +167,8 @@ export default function Component() {
 
               {selectedOption && (
                 <Select
+                  allowClear
+                  key={`pod-select-${selectedOption}`} // Unique key based on selectedOption
                   style={{ width: '300px' }}
                   placeholder="Select Pod"
                   value={selectedPod}
@@ -174,7 +182,7 @@ export default function Component() {
 
               {selectedPod && (
                 <Input
-                  style={{  width: '200px'}}
+                  style={{ width: '200px' }}
                   placeholder="Search metrics"
                   value={selectedMetric ? selectedMetric.name : searchMetric}
                   onChange={(e) => setSearchMetric(e.target.value)}
@@ -193,9 +201,11 @@ export default function Component() {
                       cursor: 'pointer',
                       padding: '4px',
                       borderRadius: '4px',
-                      '&:hover': { backgroundColor: '#f5f5f5' }
-                    } as React.CSSProperties} 
+                      transition: 'background-color 0.3s',
+                    }} 
                     onClick={() => handleMetricSelect(metric)}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                   >
                     <Text>{metric.name}</Text>
                     <br />
@@ -222,6 +232,7 @@ export default function Component() {
               componentName={selectedOption}
               podsName={selectedPod}
               metricName={selectedMetric ? selectedMetric.name : ''}
+              lastUpdated={lastUpdated} // Pass the new prop
             />
           </Space>
         </Sider>

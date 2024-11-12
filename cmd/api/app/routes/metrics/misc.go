@@ -7,44 +7,25 @@ import (
     "strings"
     "time"
     "github.com/prometheus/common/expfmt"
- 
+    v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
     _ "modernc.org/sqlite"
 )
 
-type Metric struct {
-    Name   string        `json:"name"`
-    Help   string        `json:"help"`
-    Type   string        `json:"type"`
-    Values []MetricValue `json:"values,omitempty"`
-}
-
-type MetricValue struct {
-    Labels  map[string]string `json:"labels,omitempty"`
-    Value   string            `json:"value"`
-    Measure string            `json:"measure"`
-} 
-
-type ParsedData struct {
-    CurrentTime string             `json:"currentTime"`
-    Metrics     map[string]*Metric `json:"metrics"`
-}
-
-
-func parseMetricsToJSON(metricsOutput string) (*ParsedData, error) {
+func parseMetricsToJSON(metricsOutput string) (*v1.ParsedData, error) {
     var parser expfmt.TextParser
     metricFamilies, err := parser.TextToMetricFamilies(strings.NewReader(metricsOutput))
     if err != nil {
         return nil, fmt.Errorf("error parsing metrics: %w", err)
     }
 
-    metrics := make(map[string]*Metric)
+    metrics := make(map[string]*v1.Metric)
 
     for name, mf := range metricFamilies {
-        m := &Metric{
+        m := &v1.Metric{
             Name:   name,
             Help:   mf.GetHelp(),
             Type:   mf.GetType().String(),
-            Values: []MetricValue{},
+            Values: []v1.MetricValue{},
         }
 
         for _, metric := range mf.Metric {
@@ -61,38 +42,38 @@ func parseMetricsToJSON(metricsOutput string) (*ParsedData, error) {
                         bucketLabels[k] = v
                     }
                     bucketLabels["le"] = fmt.Sprintf("%f", bucket.GetUpperBound())
-                    m.Values = append(m.Values, MetricValue{
+                    m.Values = append(m.Values, v1.MetricValue{
                         Labels:  bucketLabels,
                         Value:   bucketValue,
                         Measure: "cumulative_count",
                     })
                 }
-                m.Values = append(m.Values, MetricValue{
+                m.Values = append(m.Values, v1.MetricValue{
                     Labels:  labels,
                     Value:   fmt.Sprintf("%f", metric.Histogram.GetSampleSum()),
                     Measure: "sum",
                 })
-                m.Values = append(m.Values, MetricValue{
+                m.Values = append(m.Values, v1.MetricValue{
                     Labels:  labels,
                     Value:   fmt.Sprintf("%d", metric.Histogram.GetSampleCount()),  
                     Measure: "count",
                 })
             } else if metric.Counter != nil {
                 value := fmt.Sprintf("%f", metric.Counter.GetValue())  
-                m.Values = append(m.Values, MetricValue{
+                m.Values = append(m.Values, v1.MetricValue{
                     Labels:  labels,
                     Value:   value,
                     Measure: "total", 
                 })
             } else if metric.Gauge != nil {
                 value := fmt.Sprintf("%f", metric.Gauge.GetValue())
-                m.Values = append(m.Values, MetricValue{
+                m.Values = append(m.Values, v1.MetricValue{
                     Labels:  labels,
                     Value:   value,
                     Measure: "current_value", 
                 })
             } else {
-                m.Values = append(m.Values, MetricValue{
+                m.Values = append(m.Values, v1.MetricValue{
                     Labels:  labels,
                     Value:   "",
                     Measure: "unhandled_metric_type",
@@ -105,7 +86,7 @@ func parseMetricsToJSON(metricsOutput string) (*ParsedData, error) {
 
     currentTime := time.Now().Format(time.RFC3339)
 
-	parsedData := &ParsedData{
+	parsedData := &v1.ParsedData{
         CurrentTime: currentTime,
         Metrics:     metrics,
     }
@@ -113,7 +94,7 @@ func parseMetricsToJSON(metricsOutput string) (*ParsedData, error) {
 
 }
 
-func saveToDB(appName, podName string, data *ParsedData) error {
+func saveToDB(appName, podName string, data *v1.ParsedData) error {
 	sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
 	sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
 

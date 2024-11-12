@@ -8,19 +8,10 @@ import (
 	"strings"
 	"time"
 
+	v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
 )
-
-type PodInfo struct {
-	Name string `json:"name"`
-}
-
-// MetricInfo holds basic metric information
-type MetricInfo struct {
-    Help string `json:"help"`
-    Type string `json:"type"`
-}
 
 func queryMetrics(c *gin.Context) {
 	appName := c.Param("app_name")
@@ -177,7 +168,7 @@ func queryMetrics(c *gin.Context) {
 		}
 		defer rows.Close()
 
-		result := make(map[string]map[string]MetricInfo)
+		result := make(map[string]map[string]v1.MetricInfo)
 
 		// Process each table (pod)
 		for rows.Next() {
@@ -199,7 +190,7 @@ func queryMetrics(c *gin.Context) {
 			}
 			defer metricRows.Close()
 
-			podMetrics := make(map[string]MetricInfo)
+			podMetrics := make(map[string]v1.MetricInfo)
 
 			// Process each metric
 			for metricRows.Next() {
@@ -209,7 +200,7 @@ func queryMetrics(c *gin.Context) {
 					continue
 				}
 
-				podMetrics[name] = MetricInfo{
+				podMetrics[name] = v1.MetricInfo{
 					Help: help,
 					Type: metricType,
 				}
