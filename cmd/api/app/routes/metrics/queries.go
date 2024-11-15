@@ -30,12 +30,12 @@ const (
     insertTimeLoadSQL = `
         INSERT OR REPLACE INTO %s (time_entry) VALUES (?)
     `
-
+    // 900 is 15 minutes in seconds 
     getOldestTimeSQL = `
         SELECT time_entry FROM %s
         ORDER BY time_entry DESC
-        LIMIT 1 OFFSET 5
-    `
+        LIMIT 1 OFFSET 20  
+    ` 
 
     deleteOldTimeSQL = `DELETE FROM %s WHERE time_entry <= ?`
 

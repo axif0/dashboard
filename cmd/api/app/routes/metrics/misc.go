@@ -1,6 +1,7 @@
 package metrics
 
 import (
+  
     "database/sql"
     "fmt"
     "log"
@@ -10,6 +11,46 @@ import (
     v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
     _ "modernc.org/sqlite"
 )
+// Define a struct for save requests
+type saveRequest struct {
+    appName string
+    podName string
+    data    *v1.ParsedData
+    result  chan error
+}
+
+// Start the database worker
+func startDatabaseWorker(requests chan saveRequest) {
+    dbs := make(map[string]*sql.DB)
+    for req := range requests {
+        sanitizedAppName := strings.ReplaceAll(req.appName, "-", "_")
+        db, ok := dbs[sanitizedAppName]
+        if !ok {
+            var err error
+            db, err = sql.Open("sqlite", fmt.Sprintf("file:%s.db?cache=shared&mode=rwc", sanitizedAppName))
+            if err != nil {
+                log.Printf("Error opening database: %v", err)
+                if req.result != nil {
+                    req.result <- err
+                }
+                continue
+            }
+            dbs[sanitizedAppName] = db
+        }
+        err := saveToDBWithConnection(db, req.appName, req.podName, req.data)
+        if req.result != nil {
+            req.result <- err
+        } else if err != nil {
+            log.Printf("Error saving to DB: %v", err)
+        }
+    }
+    // Close all databases when done
+    for _, db := range dbs {
+        db.Close()
+    }
+}
+
+
 
 func parseMetricsToJSON(metricsOutput string) (*v1.ParsedData, error) {
     var parser expfmt.TextParser
@@ -93,19 +134,28 @@ func parseMetricsToJSON(metricsOutput string) (*v1.ParsedData, error) {
     return parsedData, nil
 
 }
-
-func saveToDB(appName, podName string, data *v1.ParsedData) error {
-	sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
+func saveToDBWithConnection(db *sql.DB, appName, podName string, data *v1.ParsedData) (err error) {
+	// sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
 	sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
-
-	db, err := sql.Open("sqlite", sanitizedAppName+".db")
-	if err != nil {
-		log.Printf("Error opening database: %v", err)
-		return err
-	}
-	defer db.Close()
+    log.Printf("Saving data for app '%s', pod '%s' (sanitized: '%s')", appName, podName, sanitizedPodName)
 
 	tx, err := db.Begin()
+    if err != nil {
+        log.Printf("Error starting transaction: %v", err)
+        return err
+    }
+    defer func() {
+        if p := recover(); p != nil {
+            tx.Rollback()
+            log.Printf("Recovered from panic: %v", p)
+            err = fmt.Errorf("panic occurred: %v", p)
+        } else if err != nil {
+            tx.Rollback()
+            log.Printf("Transaction rolled back due to error: %v", err)
+        }
+    }()
+    
+
 	if err != nil {
 		log.Printf("Error starting transaction: %v", err)
 		return err

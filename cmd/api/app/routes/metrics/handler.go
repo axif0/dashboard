@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	    "encoding/json"
-
+	"encoding/json"
+	"time"
 	v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
@@ -16,9 +16,10 @@ import (
 	"github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
-	 
-)
+	"k8s.io/client-go/tools/clientcmd" 
+	"sync"
+	"log"
+) 
 
 const (
 	namespace                 = "karmada-system"
@@ -30,79 +31,102 @@ const (
 	controllerManagerPort     = "8080"
 )
 
+func fetchMetrics(appName string, queryType string, requests chan saveRequest) (map[string]*v1.ParsedData, []string, error) {
+    kubeClient := client.InClusterClient()
+    podsMap, errors := getKarmadaPods(appName)
+    if len(podsMap) == 0 && len(errors) > 0 {
+        return nil, errors, fmt.Errorf("no pods found")
+    }
+    allMetrics := make(map[string]*v1.ParsedData)
+    var mu sync.Mutex
+    var wg sync.WaitGroup
+    for clusterName, pods := range podsMap {
+        for _, pod := range pods {
+            wg.Add(1)
+            go func(pod v1.PodInfo, clusterName string) {
+                defer wg.Done()
+                var jsonMetrics *v1.ParsedData
+                var err error
+                if appName == karmadaAgent {
+                    jsonMetrics, err = getKarmadaAgentMetrics(pod.Name, clusterName, requests)
+                    if err != nil {
+                        mu.Lock()
+                        errors = append(errors, err.Error())
+                        mu.Unlock()
+                        return
+                    }
+                    mu.Lock()
+                    allMetrics[pod.Name] = jsonMetrics
+                    mu.Unlock()
+                } else {
+                    port := schedulerPort
+                    if appName == karmadaControllerManager {
+                        port = controllerManagerPort
+                    }
+                    metricsOutput, err := kubeClient.CoreV1().RESTClient().Get().
+                        Namespace(namespace).
+                        Resource("pods").
+                        SubResource("proxy").
+                        Name(fmt.Sprintf("%s:%s", pod.Name, port)).
+                        Suffix("metrics").
+                        Do(context.TODO()).Raw()
+                    if err != nil {
+                        mu.Lock()
+                        errors = append(errors, err.Error())
+                        mu.Unlock()
+                        return
+                    }
+                    jsonMetrics, err = parseMetricsToJSON(string(metricsOutput))
+                    if err != nil {
+                        mu.Lock()
+                        errors = append(errors, "Failed to parse metrics to JSON")
+                        mu.Unlock()
+                        return
+                    }
+                    // Send save request without waiting
+                    requests <- saveRequest{
+                        appName: appName,
+                        podName: pod.Name,
+                        data:    jsonMetrics,
+                        result:  nil, // Not waiting for result
+                    }
+                    mu.Lock()
+                    allMetrics[pod.Name] = jsonMetrics
+                    mu.Unlock()
+                }
+            }(pod, clusterName)
+        }
+    }
+    wg.Wait()
+    return allMetrics, errors, nil
+}
+
+
 
 func getMetrics(c *gin.Context) {
-	appName := c.Param("app_name")
-	queryType := c.Query("type")
- 
-	 if queryType == "metricsdetails" {
-        queryMetrics(c) 
+    appName := c.Param("app_name")
+    queryType := c.Query("type")
+
+    if queryType == "metricsdetails" {
+        queryMetrics(c)
         return
     }
 
-	kubeClient := client.InClusterClient()
-
-	podsMap, errors := getKarmadaPods(appName)
-	if len(podsMap) == 0 && len(errors) > 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{"errors": errors})
-		return
-	}
-	allMetrics := make(map[string]*v1.ParsedData)
-
-	
-	for clusterName, pods := range podsMap {
-		for _, pod := range pods {
-			var jsonMetrics *v1.ParsedData
-			var err error
-			if appName == karmadaAgent {
-				jsonMetrics, err = getKarmadaAgentMetrics(pod.Name, clusterName)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-					return
-				}
-				allMetrics[pod.Name] = jsonMetrics
-			} else {
-				port := schedulerPort  
-				if appName == karmadaControllerManager {
-					port = controllerManagerPort
-				}
-				
-				metricsOutput, err := kubeClient.CoreV1().RESTClient().Get().
-					Namespace(namespace).
-					Resource("pods").
-					SubResource("proxy").
-					Name(fmt.Sprintf("%s:%s", pod.Name, port)).
-					Suffix("metrics").
-					Do(context.TODO()).Raw()
-
-				if err != nil {
-					continue
-				}
-	 
-				jsonMetrics, err = parseMetricsToJSON(string(metricsOutput))
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse metrics to JSON"})
-					return
-				}
-		
-				err = saveToDB(appName, pod.Name, jsonMetrics)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save metrics to DB: %v", err)})
-					return
-				}
-				allMetrics[pod.Name] = jsonMetrics
-			}
-		}
-	}
-
+    allMetrics, errors, err := fetchMetrics(appName, queryType, requests)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"errors": errors, "error": err.Error()})
+        return
+    }
     if len(allMetrics) > 0 {
         c.JSON(http.StatusOK, allMetrics)
     } else {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "No metrics data found"})
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "No metrics data found", "errors": errors})
     }
 }
 
-func getKarmadaAgentMetrics(podName string, clusterName string) (*v1.ParsedData, error) {
+
+
+func getKarmadaAgentMetrics(podName string, clusterName string, requests chan saveRequest) (*v1.ParsedData, error) {
 	kubeClient := client.InClusterKarmadaClient()
 	clusters, err := kubeClient.ClusterV1alpha1().Clusters().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
@@ -169,10 +193,17 @@ func getKarmadaAgentMetrics(podName string, clusterName string) (*v1.ParsedData,
 
     }
 	
-	err = saveToDB(karmadaAgent, podName, parsedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to save metrics to DB: %v", err)
-	}
+	// Send save request to the database worker
+    // resultChan := make(chan error)
+    requests <- saveRequest{
+        appName: karmadaAgent,
+        podName: podName,
+        data:    parsedData,
+        result:  nil, // Not waiting for result
+    }
+	// if err := <-resultChan; err != nil {
+    //     return nil, fmt.Errorf("failed to save metrics to DB: %v", err)
+    // }
 	
 	return parsedData, nil
 }
@@ -261,16 +292,55 @@ func getKarmadaPods(appName string) (map[string][]v1.PodInfo, []string) {
 
 	return podsMap, errors
 }
+var (requests chan saveRequest)
+ 
+func startAppMetricsFetcher(appName string) {
+    ticker := time.NewTicker(1 * time.Second)
+    defer ticker.Stop()
+    for range ticker.C {
+        fmt.Printf("Fetching metrics for %s at %s\n", appName, time.Now().Format(time.RFC3339))
+        go func() {
+            _, errors, err := fetchMetrics(appName, "", requests)
+            if err != nil {
+                log.Printf("Error fetching metrics for %s: %v, errors: %v\n", appName, err, errors)
+            } else {
+                log.Printf("Successfully fetched metrics for %s\n", appName)
+            }
+        }()
+    }
+}
 
 func init() {
-	r := router.V1()
-	r.GET("/metrics/:app_name", getMetrics) // get all metrics from karmada
-	r.GET("/metrics/:app_name/:pod_name", queryMetrics) // get metrics from db
-	// http://localhost:8000/api/v1/metrics/karmada-scheduler  //from terminal
+    // Initialize the application names
+    appNames := []string{
+        karmadaScheduler,
+        karmadaControllerManager,
+        karmadaAgent,
+        karmadaSchedulerEstimator + "-member1",
+        karmadaSchedulerEstimator + "-member2",
+        karmadaSchedulerEstimator + "-member3",
+    }
+
+    // Initialize the request channel
+    requests = make(chan saveRequest, len(appNames)) // Buffered channel
+
+    // Start the database worker
+    go startDatabaseWorker(requests)
+
+    // Start the per-app periodic metrics fetcher
+    for _, app := range appNames {
+        go startAppMetricsFetcher(app)
+    }
+
+    // Initialize the router
+    r := router.V1()
+    r.GET("/metrics/:app_name", getMetrics)
+    r.GET("/metrics/:app_name/:pod_name", queryMetrics)
+    // http://localhost:8000/api/v1/metrics/karmada-scheduler  //from terminal
 	
 	// http://localhost:8000/api/v1/metrics/karmada-scheduler?type=metricsdetails  //from sqlite details bar
 	
 	// http://localhost:8000/api/v1/metrics/karmada-scheduler/karmada-scheduler-7bd4659f9f-hh44f?type=details&mname=workqueue_queue_duration_seconds
 
 	// all metrics details
-} 
+}
