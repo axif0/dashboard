@@ -34,7 +34,7 @@ const (
     getOldestTimeSQL = `
         SELECT time_entry FROM %s
         ORDER BY time_entry DESC
-        LIMIT 1 OFFSET 20  
+        LIMIT 1 OFFSET 900  
     ` 
 
     deleteOldTimeSQL = `DELETE FROM %s WHERE time_entry <= ?`

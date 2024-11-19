@@ -13,7 +13,10 @@ export interface MetricsResponse {
     [clusterName: string]: ClusterMetrics;
 }
 
- 
+export interface SyncStatusResponse {
+    [componentName: string]: boolean;
+}
+
 export async function GetMetricsInfo(componentName: string, type: string): Promise<MetricsResponse> {
     // console.log("componentName", componentName, "type", type);
     const resp = await karmadaClient.get<IResponse<MetricsResponse>>(`/metrics/${componentName}?type=${type}`);
@@ -29,7 +32,6 @@ export interface MetricValue {
     };
 }
 
-
 export interface MetricDetails {
     name: string;
     values: MetricValue[];
@@ -41,7 +43,6 @@ export interface MetricDetailsResponse {
     };
 }
 
-
 export async function GetMetricsDetails(componentName: string, podsName: string, metricName: string): Promise<MetricDetailsResponse> {
     console.log("componentName", componentName, "podsName", podsName, "metricName", metricName);
     const resp = await karmadaClient.get<MetricDetailsResponse>(`/metrics/${componentName}/${podsName}?type=details&mname=${metricName}`);
@@ -49,53 +50,16 @@ export async function GetMetricsDetails(componentName: string, podsName: string,
     return resp.data;
 }
 
-export interface MetricDataResponse {
-    [podName: string]: {
-        currentTime: string;
-        metrics: {
-            [metricName: string]: {
-                name: string;
-                help: string;
-                type: 'COUNTER' | 'GAUGE' | 'SUMMARY' | 'HISTOGRAM';
-                values: MetricValue[];
-            };
-        };
-    };
+interface SyncSettingResponse {
+    message: string;
 }
 
-export async function GetMetricsData(componentName: string): Promise<{ status: number; data?: MetricDataResponse | any }> {
-    console.log("componentName", componentName);
-    const resp = await karmadaClient.get<MetricDataResponse>(`/metrics/${componentName}`);
-    console.log("resp.data GetMetricsData", resp.data);
+export async function UpdateSyncSetting(componentName: string, action: 'sync_on' | 'sync_off'): Promise<string> {
+    const resp = await karmadaClient.get<IResponse<SyncSettingResponse>>(`/metrics/${componentName}?type=${action}`);
+    return resp.data.message;
+}
 
-    let data = resp.data;
-
-    if (typeof data === 'string') {
-        try {
-            data = JSON.parse(data);
-        } catch (e) {
-            console.log("string type error", e);
-            return { status: 400, data: resp.data };
-        }
-    }
-
-    if (data) {
-        const isValidMetrics = Object.values(data).every(podMetrics =>
-            podMetrics.currentTime &&
-            podMetrics.metrics &&
-            typeof podMetrics.metrics === 'object' &&
-            Object.values(podMetrics.metrics).every(metric =>
-                metric.name &&
-                metric.help &&
-                metric.type &&
-                Array.isArray(metric.values)
-            )
-        );
-
-        if (isValidMetrics) {
-            return { status: 200, data };
-        }
-    }
-
-    return { status: 400, data };
+export async function GetSyncStatus(): Promise<SyncStatusResponse> {
+    const resp = await karmadaClient.get<SyncStatusResponse>('/metrics?type=sync_status');
+    return resp.data;
 }

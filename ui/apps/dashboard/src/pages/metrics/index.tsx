@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Layout, Button, Card, Space, Typography, Select, Input, message } from 'antd';
+import { Layout, Button, Card, Space, Typography, Select, Input, message, Modal, Switch } from 'antd';
 import Panel from '@/components/panel';
-import { GetMetricsInfo, GetMetricsData } from '@/services/metrics';
+import { GetMetricsInfo, UpdateSyncSetting, GetSyncStatus } from '@/services/metrics';
 import Diagram from '@/pages/metrics/diagram';
 
 const { Sider, Content } = Layout;
@@ -19,6 +19,15 @@ interface PodOption {
   name: string;
 }
 
+const options = [
+  'karmada-scheduler-estimator-member1',
+  'karmada-scheduler-estimator-member2',
+  'karmada-scheduler-estimator-member3',
+  'karmada-controller-manager',
+  'karmada-agent',
+  'karmada-scheduler',
+];
+
 export default function Component() {
   const [activeTab, setActiveTab] = useState<string>('graph');
   const [selectedOption, setSelectedOption] = useState<string>(() => {
@@ -31,24 +40,19 @@ export default function Component() {
   });
   const [selectedPod, setSelectedPod] = useState<string>(() => {
     return localStorage.getItem('selectedPod') || '';
+
   });
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [pods, setPods] = useState<PodOption[]>([]);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [lastUpdated, setLastUpdated] = useState<number>(0); // New state
-
-  const options = [
-    'karmada-scheduler-estimator-member1',
-    'karmada-scheduler-estimator-member2',
-    'karmada-scheduler-estimator-member3',
-    'karmada-controller-manager',
-    'karmada-agent',
-    'karmada-scheduler',
-  ];
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [syncSettings, setSyncSettings] = useState<Record<string, boolean>>(() => {
+    const savedSettings = localStorage.getItem('syncSettings');
+    return savedSettings ? JSON.parse(savedSettings) : options.reduce((acc, option) => ({ ...acc, [option]: true }), {});
+  });
 
   const fetchMetrics = async () => {
     if (!selectedOption) return;
-    
+
     console.log("Fetching metrics for option:", selectedOption);
     try {
       const data = await GetMetricsInfo(selectedOption, 'metricsdetails');
@@ -96,7 +100,27 @@ export default function Component() {
     }
   }, [selectedMetric]);
 
-  const filteredMetrics = metrics.filter(metric => 
+  useEffect(() => {
+    localStorage.setItem('syncSettings', JSON.stringify(syncSettings));
+  }, [syncSettings]);
+
+  useEffect(() => {
+    const fetchSyncStatus = async () => {
+      try {
+        const response = await GetSyncStatus();
+        setSyncSettings(response);
+      } catch (error) {
+        console.error('Failed to fetch sync status:', error);
+        message.error('Failed to fetch sync status');
+      }
+    };
+
+    if (isModalVisible) {
+      fetchSyncStatus();
+    }
+  }, [isModalVisible]);
+
+  const filteredMetrics = metrics.filter(metric =>
     metric.name.toLowerCase().includes(searchMetric.toLowerCase())
   );
 
@@ -119,30 +143,37 @@ export default function Component() {
     setSelectedMetric(null);
   };
 
-  const handleSync = async () => {
+  const handleSwitchChange = async (option: string, checked: boolean) => {
+    const prevState = syncSettings[option];
+    
     try {
-      if (selectedOption === '') {
-        message.error('Please select a component');
-        return;
-      } else {    
-        const response = await GetMetricsData(selectedOption);
-        console.log("Sync response:", response);
-
-        if (response.status === 200) {
-          setSyncStatus('success');
-          message.success('Sync successful!');
-          await fetchMetrics(); // Ensure fetchMetrics completes
-          setLastUpdated(Date.now()); // Update lastUpdated
-          setTimeout(() => setSyncStatus('idle'), 5000); // Reset status after 5 seconds
-        } else {
-          throw new Error('Sync failed with status: ' + response.status);
-        }
-      }
+      // Optimistically update UI
+      setSyncSettings(prev => ({
+        ...prev,
+        [option]: checked
+      }));
+  
+      const responseMessage = await UpdateSyncSetting(option, checked ? 'sync_on' : 'sync_off');
+      message.success(responseMessage);
+      
+      // Fetch the actual sync status to ensure UI reflects backend state
+      const statusResponse = await GetSyncStatus();
+      setSyncSettings(statusResponse);
+      
     } catch (error) {
-      setSyncStatus('error');
-      message.error('Sync failed: ' + (error instanceof Error ? error.message : 'due to an unknown error'));
-      setTimeout(() => setSyncStatus('idle'), 5000); // Reset status after 5 seconds
+      // On any error, revert to previous state and show error
+      setSyncSettings(prev => ({
+        ...prev,
+        [option]: prevState
+      }));
+      
+      message.error('Failed to update sync status, Please wait a bit');
+      console.error('Error updating sync status:', error);
     }
+  };
+
+  const handleSyncOk = () => {
+    setIsModalVisible(false);
   };
 
   return (
@@ -154,7 +185,7 @@ export default function Component() {
             <div style={{ display: 'flex' }}>
               <Select
                 allowClear
-                key={`component-select`} // Optional: unique key if needed
+                key={`component-select`}
                 style={{ width: '200px' }}
                 placeholder="Select Option"
                 value={selectedOption}
@@ -168,7 +199,7 @@ export default function Component() {
               {selectedOption && (
                 <Select
                   allowClear
-                  key={`pod-select-${selectedOption}`} // Unique key based on selectedOption
+                  key={`pod-select-${selectedOption}`}
                   style={{ width: '300px' }}
                   placeholder="Select Pod"
                   value={selectedPod}
@@ -194,15 +225,15 @@ export default function Component() {
             {searchMetric && (
               <Card size="small" title="Matching Metrics">
                 {filteredMetrics.map(metric => (
-                  <div 
-                    key={metric.name} 
-                    style={{ 
-                      marginBottom: '8px', 
+                  <div
+                    key={metric.name}
+                    style={{
+                      marginBottom: '8px',
                       cursor: 'pointer',
                       padding: '4px',
                       borderRadius: '4px',
                       transition: 'background-color 0.3s',
-                    }} 
+                    }}
                     onClick={() => handleMetricSelect(metric)}
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
@@ -214,14 +245,14 @@ export default function Component() {
                 ))}
               </Card>
             )}
-          
+
             {/* Metric Details */}
             {selectedMetric && (
               <Card size="small" title="Metric Details">
                 <div>
                   <Text>Type: {selectedMetric.type}</Text>
                   <br />
-                  <Text>Help: {selectedMetric.help}</Text>  
+                  <Text>Help: {selectedMetric.help}</Text>
                 </div>
               </Card>
             )}
@@ -232,28 +263,34 @@ export default function Component() {
               componentName={selectedOption}
               podsName={selectedPod}
               metricName={selectedMetric ? selectedMetric.name : ''}
-              lastUpdated={lastUpdated} // Pass the new prop
             />
           </Space>
         </Sider>
-        
+
         <Content style={{ padding: '16px', background: '#fff' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
             <Space>
-              {syncStatus === 'success' ? (
-                <Button style={{ color: 'green' }} onClick={handleSync}>
-                  Sync Successful
-                </Button>
-              ) : syncStatus === 'error' ? (
-                <Button style={{ color: 'red' }} onClick={handleSync}>
-                  Sync Failed - Retry?
-                </Button>
-              ) : (
-                <Button onClick={handleSync}>Sync db</Button>
-              )}
-              {/* <Button danger>Delete</Button> */}
+              <Button onClick={() => setIsModalVisible(true)}>Sync DB</Button>
             </Space>
           </div>
+
+          {/* Modal for Sync Options */}
+          <Modal
+            title="Sync Options"
+            visible={isModalVisible}
+            onOk={handleSyncOk}
+            onCancel={() => setIsModalVisible(false)}
+          >
+            {options.map(option => (
+              <div key={option} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                <Text style={{ flex: 1 }}>{option}</Text>
+                <Switch
+                  checked={syncSettings[option] || false}
+                  onChange={checked => handleSwitchChange(option, checked)}
+                />
+              </div>
+            ))}
+          </Modal>
         </Content>
       </Layout>
     </Panel>

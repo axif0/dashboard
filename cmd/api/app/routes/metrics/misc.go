@@ -1,7 +1,7 @@
 package metrics
 
 import (
-  
+    "sync"
     "database/sql"
     "fmt"
     "log"
@@ -9,7 +9,7 @@ import (
     "time"
     "github.com/prometheus/common/expfmt"
     v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
-    _ "modernc.org/sqlite"
+    _ "github.com/glebarez/sqlite"
 )
 // Define a struct for save requests
 type saveRequest struct {
@@ -21,32 +21,22 @@ type saveRequest struct {
 
 // Start the database worker
 func startDatabaseWorker(requests chan saveRequest) {
-    dbs := make(map[string]*sql.DB)
     for req := range requests {
-        sanitizedAppName := strings.ReplaceAll(req.appName, "-", "_")
-        db, ok := dbs[sanitizedAppName]
-        if !ok {
-            var err error
-            db, err = sql.Open("sqlite", fmt.Sprintf("file:%s.db?cache=shared&mode=rwc", sanitizedAppName))
-            if err != nil {
-                log.Printf("Error opening database: %v", err)
-                if req.result != nil {
-                    req.result <- err
-                }
-                continue
+        db, err := getDB(req.appName)
+        if err != nil {
+            log.Printf("Error opening database: %v", err)
+            if req.result != nil {
+                req.result <- err
             }
-            dbs[sanitizedAppName] = db
+            continue
         }
-        err := saveToDBWithConnection(db, req.appName, req.podName, req.data)
+        
+        err = saveToDBWithConnection(db, req.appName, req.podName, req.data)
         if req.result != nil {
             req.result <- err
         } else if err != nil {
             log.Printf("Error saving to DB: %v", err)
         }
-    }
-    // Close all databases when done
-    for _, db := range dbs {
-        db.Close()
     }
 }
 
@@ -134,12 +124,16 @@ func parseMetricsToJSON(metricsOutput string) (*v1.ParsedData, error) {
     return parsedData, nil
 
 }
+var dbMutex sync.Mutex
+
 func saveToDBWithConnection(db *sql.DB, appName, podName string, data *v1.ParsedData) (err error) {
-	// sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
-	sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
+    sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
     log.Printf("Saving data for app '%s', pod '%s' (sanitized: '%s')", appName, podName, sanitizedPodName)
 
-	tx, err := db.Begin()
+    dbMutex.Lock()
+    defer dbMutex.Unlock()
+
+    tx, err := db.Begin()
     if err != nil {
         log.Printf("Error starting transaction: %v", err)
         return err
@@ -152,37 +146,32 @@ func saveToDBWithConnection(db *sql.DB, appName, podName string, data *v1.Parsed
         } else if err != nil {
             tx.Rollback()
             log.Printf("Transaction rolled back due to error: %v", err)
+        } else {
+            tx.Commit()
         }
     }()
-    
 
-	if err != nil {
-		log.Printf("Error starting transaction: %v", err)
-		return err
-	}
-	defer tx.Rollback()
+    // Create tables
+    if _, err = tx.Exec(fmt.Sprintf(createMainTableSQL, sanitizedPodName)); err != nil {
+        log.Printf("Error creating main table: %v", err)
+        return err
+    }
 
-	// Create tables
-	if _, err = tx.Exec(fmt.Sprintf(createMainTableSQL, sanitizedPodName)); err != nil {
-		log.Printf("Error creating main table: %v", err)
-		return err
-	}
+    if _, err = tx.Exec(fmt.Sprintf(createValuesTableSQL, sanitizedPodName, sanitizedPodName)); err != nil {
+        log.Printf("Error creating values table: %v", err)
+        return err
+    }
 
-	if _, err = tx.Exec(fmt.Sprintf(createValuesTableSQL, sanitizedPodName, sanitizedPodName)); err != nil {
-		log.Printf("Error creating values table: %v", err)
-		return err
-	}
+    if _, err = tx.Exec(fmt.Sprintf(createLabelsTableSQL, sanitizedPodName, sanitizedPodName)); err != nil {
+        log.Printf("Error creating labels table: %v", err)
+        return err
+    }
 
-	if _, err = tx.Exec(fmt.Sprintf(createLabelsTableSQL, sanitizedPodName, sanitizedPodName)); err != nil {
-		log.Printf("Error creating labels table: %v", err)
-		return err
-	}
-
-	timeLoadTableName := fmt.Sprintf("%s_time_load", sanitizedPodName)
-	if _, err = tx.Exec(fmt.Sprintf(createTimeLoadTableSQL, timeLoadTableName)); err != nil {
-		log.Printf("Error creating %s table: %v", timeLoadTableName, err)
-		return err
-	}
+    timeLoadTableName := fmt.Sprintf("%s_time_load", sanitizedPodName)
+    if _, err = tx.Exec(fmt.Sprintf(createTimeLoadTableSQL, timeLoadTableName)); err != nil {
+        log.Printf("Error creating %s table: %v", timeLoadTableName, err)
+        return err
+    }
 
     // Use data.CurrentTime and data.Metrics directly
     if _, err = tx.Exec(fmt.Sprintf(insertTimeLoadSQL, timeLoadTableName), data.CurrentTime); err != nil {
@@ -190,82 +179,82 @@ func saveToDBWithConnection(db *sql.DB, appName, podName string, data *v1.Parsed
         return err
     }
 
-	// Get oldest time and delete old data
-	var oldestTime string
-	err = tx.QueryRow(fmt.Sprintf(getOldestTimeSQL, timeLoadTableName)).Scan(&oldestTime)
-	if err != nil && err != sql.ErrNoRows {
-		log.Printf("Error getting oldest time entry: %v", err)
-		return err
-	}
+    // Get oldest time and delete old data
+    var oldestTime string
+    err = tx.QueryRow(fmt.Sprintf(getOldestTimeSQL, timeLoadTableName)).Scan(&oldestTime)
+    if err != nil && err != sql.ErrNoRows {
+        log.Printf("Error getting oldest time entry: %v", err)
+        return err
+    }
 
-	if oldestTime != "" {
-		result, err := tx.Exec(fmt.Sprintf(deleteOldTimeSQL, timeLoadTableName), oldestTime)
-		if err != nil {
-			log.Printf("Error deleting old time entries: %v", err)
-			return err
-		}
-		rowsAffected, _ := result.RowsAffected()
-		log.Printf("Deleted %d old time entries from %s", rowsAffected, timeLoadTableName)
+    if oldestTime != "" {
+        result, err := tx.Exec(fmt.Sprintf(deleteOldTimeSQL, timeLoadTableName), oldestTime)
+        if err != nil {
+            log.Printf("Error deleting old time entries: %v", err)
+            return err
+        }
+        rowsAffected, _ := result.RowsAffected()
+        log.Printf("Deleted %d old time entries from %s", rowsAffected, timeLoadTableName)
 
-		result, err = tx.Exec(fmt.Sprintf(deleteAssociatedMetricsSQL, sanitizedPodName), oldestTime)
-		if err != nil {
-			log.Printf("Error deleting associated metrics: %v", err)
-			return err
-		}
-		rowsAffected, _ = result.RowsAffected()
-		log.Printf("Deleted %d associated metrics from %s", rowsAffected, sanitizedPodName)
+        result, err = tx.Exec(fmt.Sprintf(deleteAssociatedMetricsSQL, sanitizedPodName), oldestTime)
+        if err != nil {
+            log.Printf("Error deleting associated metrics: %v", err)
+            return err
+        }
+        rowsAffected, _ = result.RowsAffected()
+        log.Printf("Deleted %d associated metrics from %s", rowsAffected, sanitizedPodName)
 
-		result, err = tx.Exec(fmt.Sprintf(deleteAssociatedValuesSQL, sanitizedPodName, sanitizedPodName))
-		if err != nil {
-			log.Printf("Error deleting associated values: %v", err)
-			return err
-		}
-		rowsAffected, _ = result.RowsAffected()
-		log.Printf("Deleted %d associated values from %s_values", rowsAffected, sanitizedPodName)
-	}
+        result, err = tx.Exec(fmt.Sprintf(deleteAssociatedValuesSQL, sanitizedPodName, sanitizedPodName))
+        if err != nil {
+            log.Printf("Error deleting associated values: %v", err)
+            return err
+        }
+        rowsAffected, _ = result.RowsAffected()
+        log.Printf("Deleted %d associated values from %s_values", rowsAffected, sanitizedPodName)
+    }
 
-	// Insert metrics and values
+    // Insert metrics and values
     for metricName, metricData := range data.Metrics {
 
-		result, err := tx.Exec(fmt.Sprintf(insertMainSQL, sanitizedPodName), metricName, metricData.Help, metricData.Type, data.CurrentTime)
-		if err != nil {
-			log.Printf("Error inserting data for metric %s: %v", metricName, err)
-			return err
-		}
+        result, err := tx.Exec(fmt.Sprintf(insertMainSQL, sanitizedPodName), metricName, metricData.Help, metricData.Type, data.CurrentTime)
+        if err != nil {
+            log.Printf("Error inserting data for metric %s: %v", metricName, err)
+            return err
+        }
 
-		metricID, err := result.LastInsertId()
-		if err != nil {
-			log.Printf("Error getting last insert ID for metric %s: %v", metricName, err)
-			return err
-		}
+        metricID, err := result.LastInsertId()
+        if err != nil {
+            log.Printf("Error getting last insert ID for metric %s: %v", metricName, err)
+            return err
+        }
 
-		for _, value := range metricData.Values {
-			valueIDResult, err := tx.Exec(fmt.Sprintf("INSERT INTO %s_values (metric_id, value, measure) VALUES (?, ?, ?)", sanitizedPodName), metricID, value.Value, value.Measure)
-			if err != nil {
-				log.Printf("Error inserting value for metric %s: %v", metricName, err)
-				return err
-			}
-			valueID, err := valueIDResult.LastInsertId()
-			if err != nil {
-				log.Printf("Error getting last insert ID for value of metric %s: %v", metricName, err)
-				return err
-			}
+        for _, value := range metricData.Values {
+            valueIDResult, err := tx.Exec(fmt.Sprintf("INSERT INTO %s_values (metric_id, value, measure) VALUES (?, ?, ?)", sanitizedPodName), metricID, value.Value, value.Measure)
+            if err != nil {
+                log.Printf("Error inserting value for metric %s: %v", metricName, err)
+                return err
+            }
+            valueID, err := valueIDResult.LastInsertId()
+            if err != nil {
+                log.Printf("Error getting last insert ID for value of metric %s: %v", metricName, err)
+                return err
+            }
 
-			for labelKey, labelValue := range value.Labels {
-				_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s_labels (value_id, key, value) VALUES (?, ?, ?)", sanitizedPodName), valueID, labelKey, labelValue)
-				if err != nil {
-					log.Printf("Error inserting label for value of metric %s: %v", metricName, err)
-					return err
-				}
-			}
-		}
-	}
+            for labelKey, labelValue := range value.Labels {
+                _, err = tx.Exec(fmt.Sprintf("INSERT INTO %s_labels (value_id, key, value) VALUES (?, ?, ?)", sanitizedPodName), valueID, labelKey, labelValue)
+                if err != nil {
+                    log.Printf("Error inserting label for value of metric %s: %v", metricName, err)
+                    return err
+                }
+            }
+        }
+    }
 
-	if err = tx.Commit(); err != nil {
-		log.Printf("Error committing transaction: %v", err)
-		return err
-	}
+    if err = tx.Commit(); err != nil {
+        log.Printf("Error committing transaction: %v", err)
+        return err
+    }
 
-	log.Println("Data inserted successfully")
-	return nil
+    log.Println("Data inserted successfully")
+    return nil
 }

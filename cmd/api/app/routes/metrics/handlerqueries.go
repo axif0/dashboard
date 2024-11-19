@@ -6,12 +6,50 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
 	"github.com/gin-gonic/gin"
-	_ "modernc.org/sqlite"
 )
+
+var (
+	dbMap     = make(map[string]*sql.DB)
+	dbMapLock sync.RWMutex
+)
+
+// getDB returns an existing database connection or creates a new one
+func getDB(appName string) (*sql.DB, error) {
+	sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
+	
+	dbMapLock.RLock()
+	db, exists := dbMap[sanitizedAppName]
+	dbMapLock.RUnlock()
+	
+	if exists {
+		return db, nil
+	}
+	
+	dbMapLock.Lock()
+	defer dbMapLock.Unlock()
+	
+	// Double-check after acquiring write lock
+	if db, exists := dbMap[sanitizedAppName]; exists {
+		return db, nil
+	}
+	
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s.db?cache=shared&mode=rwc", sanitizedAppName))
+	if err != nil {
+		return nil, err
+	}
+	
+	// Set connection pool settings
+	db.SetMaxOpenConns(1)  // Restrict to 1 connection to prevent lock conflicts
+	db.SetMaxIdleConns(1)
+	
+	dbMap[sanitizedAppName] = db
+	return db, nil
+}
 
 func queryMetrics(c *gin.Context) {
 	appName := c.Param("app_name")
@@ -22,17 +60,25 @@ func queryMetrics(c *gin.Context) {
 	sanitizedAppName := strings.ReplaceAll(appName, "-", "_")
 	sanitizedPodName := strings.ReplaceAll(podName, "-", "_")
 
-	db, err := sql.Open("sqlite", sanitizedAppName+".db")
+	db, err := getDB(sanitizedAppName)
 	if err != nil {
-		log.Printf("Error opening database: %v", err)
+		log.Printf("Error getting database connection: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open database"})
 		return
 	}
-	defer db.Close()
+
+	// Add transaction for consistent reads
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
 
 	switch queryType {
 	case "mname":
-		rows, err := db.Query(fmt.Sprintf("SELECT DISTINCT name FROM %s", sanitizedPodName))
+		rows, err := tx.Query(fmt.Sprintf("SELECT DISTINCT name FROM %s", sanitizedPodName))
 		if err != nil {
 			log.Printf("Error querying metric names: %v, SQL Error: %v", err, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query metric names"})
@@ -69,7 +115,7 @@ func queryMetrics(c *gin.Context) {
             INNER JOIN %s_values v ON m.id = v.metric_id
             WHERE m.name = ?
         `, sanitizedPodName, sanitizedPodName)
-		rows, err := db.Query(query, metricName)
+		rows, err := tx.Query(query, metricName)
 		if err != nil {
 			log.Printf("Error querying metric details: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query metric details"})
@@ -101,7 +147,7 @@ func queryMetrics(c *gin.Context) {
 			}
 
 			labelsQuery := fmt.Sprintf("SELECT key, value FROM %s_labels WHERE value_id = ?", sanitizedPodName)
-			labelsRows, err := db.Query(labelsQuery, valueID)
+			labelsRows, err := tx.Query(labelsQuery, valueID)
 			if err != nil {
 				log.Printf("Error querying labels: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query labels"})

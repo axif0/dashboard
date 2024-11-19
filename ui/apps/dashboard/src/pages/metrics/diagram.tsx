@@ -8,10 +8,9 @@ interface MetricTabsProps {
   componentName: string;
   podsName: string;
   metricName: string;
-  lastUpdated: number; // New prop
 }
 
-const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName, lastUpdated }) => {
+const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName }) => {
   const [visible, setVisible] = useState(false);
   const [logs, setLogs] = useState<MetricDetailsResponse | null>(null);
 
@@ -37,7 +36,7 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
     } else {
       setLogs(null);
     }
-  }, [componentName, podsName, metricName, lastUpdated]); // Added lastUpdated
+  }, [componentName, podsName, metricName]); // Removed lastUpdated
 
   const showModal = () => {
     setVisible(true);
@@ -60,17 +59,19 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
         onCancel={() => setVisible(false)}
         footer={null}
       >
-        {logs && logs.details
-          ? Object.keys(logs.details).map((range, index) => (
-              <div key={index} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-                <span>{range}</span>
-                <Button type="link" onClick={() => handleDelete(range)}>
-                  Delete
-                </Button>
-              </div>
-            ))
-          : <p>No time ranges available</p>
-        }
+        <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+          {logs && logs.details
+            ? Object.keys(logs.details).map((range, index) => (
+                <div key={index} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <span>{range}</span>
+                  <Button type="link" onClick={() => handleDelete(range)}>
+                    Delete
+                  </Button>
+                </div>
+              ))
+            : <p>No time ranges available</p>
+          }
+        </div>
       </Modal>
       <Tabs
         activeKey={activeTab}

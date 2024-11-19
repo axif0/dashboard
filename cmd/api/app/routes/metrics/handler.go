@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"encoding/json"
-	"time"
+ 
 	v1 "github.com/karmada-io/dashboard/cmd/api/app/types/api/v1"
 	"github.com/gin-gonic/gin"
 	"github.com/karmada-io/dashboard/cmd/api/app/router"
@@ -16,9 +16,8 @@ import (
 	"github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd" 
+	"k8s.io/client-go/tools/clientcmd"  
 	"sync"
-	"log"
 ) 
 
 const (
@@ -31,7 +30,7 @@ const (
 	controllerManagerPort     = "8080"
 )
 
-func fetchMetrics(appName string, queryType string, requests chan saveRequest) (map[string]*v1.ParsedData, []string, error) {
+func fetchMetrics(appName string, requests chan saveRequest) (map[string]*v1.ParsedData, []string, error) {
     kubeClient := client.InClusterClient()
     podsMap, errors := getKarmadaPods(appName)
     if len(podsMap) == 0 && len(errors) > 0 {
@@ -101,18 +100,133 @@ func fetchMetrics(appName string, queryType string, requests chan saveRequest) (
     return allMetrics, errors, nil
 }
 
-
-
 func getMetrics(c *gin.Context) {
     appName := c.Param("app_name")
     queryType := c.Query("type")
+
+    if queryType == "sync_on" || queryType == "sync_off" {
+        syncValue := 0
+        if queryType == "sync_on" {
+            syncValue = 1
+        }
+
+        if appName == "" {
+            // Stop all apps
+            _, err := db.Exec("UPDATE app_sync SET sync_trigger = ?", syncValue)
+            if err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update sync_trigger for all apps: %v", err)})
+                return
+            }
+
+            // Cancel all existing contexts and create new ones if turning on
+            contextMutex.Lock()
+            for app := range appContexts {
+                currentSyncValue, _ := syncMap.Load(app)
+                if currentSyncValue == syncValue {
+                    continue // Skip if already in the desired state
+                }
+
+                if cancel, exists := appCancelFuncs[app]; exists {
+                    cancel() // Cancel existing context
+                }
+                
+                if syncValue == 1 {
+                    // Create new context if turning on
+                    ctx, cancel := context.WithCancel(context.Background())
+                    appContexts[app] = ctx
+                    appCancelFuncs[app] = cancel
+                    go startAppMetricsFetcher(app)
+                }
+                
+                syncMap.Store(app, syncValue)
+            }
+            contextMutex.Unlock()
+
+            message := "Sync trigger updated successfully for all apps"
+            if syncValue == 1 {
+                message = "Sync turned on successfully for all apps"
+            } else {
+                message = "Sync turned off successfully for all apps"
+            }
+            c.JSON(http.StatusOK, gin.H{"message": message})
+        } else {
+            // Update specific app
+            currentSyncValue, _ := syncMap.Load(appName)
+            if currentSyncValue == syncValue {
+                message := fmt.Sprintf("Sync is already %s for %s", queryType, appName)
+                c.JSON(http.StatusOK, gin.H{"message": message})
+                return
+            }
+
+            _, err := db.Exec("UPDATE app_sync SET sync_trigger = ? WHERE app_name = ?", syncValue, appName)
+            if err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update sync_trigger: %v", err)})
+                return
+            }
+
+            contextMutex.Lock()
+            if cancel, exists := appCancelFuncs[appName]; exists {
+                cancel() // Cancel existing context
+            }
+            
+            if syncValue == 1 {
+                // Create new context if turning on
+                ctx, cancel := context.WithCancel(context.Background())
+                appContexts[appName] = ctx
+                appCancelFuncs[appName] = cancel
+                go startAppMetricsFetcher(appName)
+            }
+            
+            syncMap.Store(appName, syncValue)
+            contextMutex.Unlock()
+
+            var message string
+            if syncValue == 1 {
+                message = fmt.Sprintf("Sync turned on successfully for %s", appName)
+            } else {
+                message = fmt.Sprintf("Sync turned off successfully for %s", appName)
+            }
+            c.JSON(http.StatusOK, gin.H{"message": message})
+        }
+
+        return
+    }
 
     if queryType == "metricsdetails" {
         queryMetrics(c)
         return
     }
 
-    allMetrics, errors, err := fetchMetrics(appName, queryType, requests)
+    if queryType == "sync_status" {
+        statusMap := make(map[string]bool)
+        
+        // Get status for all registered apps
+        for _, app := range []string{
+            karmadaScheduler,
+            karmadaControllerManager,
+            karmadaAgent,
+            karmadaSchedulerEstimator + "-member1",
+            karmadaSchedulerEstimator + "-member2",
+            karmadaSchedulerEstimator + "-member3",
+        } {
+            syncValue, exists := syncMap.Load(app)
+            if !exists {
+                statusMap[app] = false
+                continue
+            }
+            
+            if value, ok := syncValue.(int); ok {
+                statusMap[app] = value == 1
+            } else {
+                statusMap[app] = false
+            }
+        }
+        
+        c.JSON(http.StatusOK, statusMap)
+        return
+    }
+
+    allMetrics, errors, err := fetchMetrics(appName, requests)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"errors": errors, "error": err.Error()})
         return
@@ -123,7 +237,6 @@ func getMetrics(c *gin.Context) {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "No metrics data found", "errors": errors})
     }
 }
-
 
 
 func getKarmadaAgentMetrics(podName string, clusterName string, requests chan saveRequest) (*v1.ParsedData, error) {
@@ -201,16 +314,14 @@ func getKarmadaAgentMetrics(podName string, clusterName string, requests chan sa
         data:    parsedData,
         result:  nil, // Not waiting for result
     }
-	// if err := <-resultChan; err != nil {
-    //     return nil, fmt.Errorf("failed to save metrics to DB: %v", err)
-    // }
-	
 	return parsedData, nil
 }
+
 func isJSON(data []byte) bool {
     var js json.RawMessage
     return json.Unmarshal(data, &js) == nil
 }
+
 func getClusterPods(cluster *v1alpha1.Cluster) ([]v1.PodInfo, error) {
 	fmt.Printf("Getting pods for cluster: %s\n", cluster.Name)
 
@@ -292,55 +403,23 @@ func getKarmadaPods(appName string) (map[string][]v1.PodInfo, []string) {
 
 	return podsMap, errors
 }
-var (requests chan saveRequest)
  
-func startAppMetricsFetcher(appName string) {
-    ticker := time.NewTicker(1 * time.Second)
-    defer ticker.Stop()
-    for range ticker.C {
-        fmt.Printf("Fetching metrics for %s at %s\n", appName, time.Now().Format(time.RFC3339))
-        go func() {
-            _, errors, err := fetchMetrics(appName, "", requests)
-            if err != nil {
-                log.Printf("Error fetching metrics for %s: %v, errors: %v\n", appName, err, errors)
-            } else {
-                log.Printf("Successfully fetched metrics for %s\n", appName)
-            }
-        }()
-    }
-}
-
-func init() {
-    // Initialize the application names
-    appNames := []string{
-        karmadaScheduler,
-        karmadaControllerManager,
-        karmadaAgent,
-        karmadaSchedulerEstimator + "-member1",
-        karmadaSchedulerEstimator + "-member2",
-        karmadaSchedulerEstimator + "-member3",
+ func init() {  
+    goroutine()
+    // Initialize the router with modified endpoints
+        r := router.V1()
+        r.GET("/metrics", getMetrics)   
+        r.GET("/metrics/:app_name", getMetrics)
+        r.GET("/metrics/:app_name/:pod_name", queryMetrics)
     }
 
-    // Initialize the request channel
-    requests = make(chan saveRequest, len(appNames)) // Buffered channel
 
-    // Start the database worker
-    go startDatabaseWorker(requests)
-
-    // Start the per-app periodic metrics fetcher
-    for _, app := range appNames {
-        go startAppMetricsFetcher(app)
-    }
-
-    // Initialize the router
-    r := router.V1()
-    r.GET("/metrics/:app_name", getMetrics)
-    r.GET("/metrics/:app_name/:pod_name", queryMetrics)
     // http://localhost:8000/api/v1/metrics/karmada-scheduler  //from terminal
 	
 	// http://localhost:8000/api/v1/metrics/karmada-scheduler?type=metricsdetails  //from sqlite details bar
 	
 	// http://localhost:8000/api/v1/metrics/karmada-scheduler/karmada-scheduler-7bd4659f9f-hh44f?type=details&mname=workqueue_queue_duration_seconds
 
-	// all metrics details
-}
+	// http://localhost:8000/api/v1/metrics?type=sync_off // to skip all metrics
+
+    // http://localhost:8000/api/v1/metrics/karmada-scheduler?type=sync_off // to skip specific metrics
