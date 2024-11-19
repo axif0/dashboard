@@ -84,7 +84,7 @@ func startAppMetricsFetcher(appName string) {
 
     for {
         contextMutex.Lock()
-        ctx,exists := appContexts[appName]
+        ctx, exists := appContexts[appName]
         contextMutex.Unlock()
 
         if !exists {
@@ -107,15 +107,16 @@ func startAppMetricsFetcher(appName string) {
                 return
             }
 
-            go func() {
-                _, errors, err := fetchMetrics(appName, requests)
+            go func(ctx context.Context) {
+                _, errors, err := fetchMetrics(ctx, appName, requests)
                 if err != nil {
                     log.Printf("Error fetching metrics for %s: %v, errors: %v\n", appName, err, errors)
                 }
-            }()
+            }(ctx)
         }
     }
 }
+
 
 func refreshSyncTriggers() {
     ticker := time.NewTicker(5 * time.Second)
