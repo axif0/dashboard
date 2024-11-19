@@ -29,14 +29,18 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
       setLogs(null); // Optionally clear logs on error
     }
   };
-  
+
   useEffect(() => {
     if (componentName && podsName && metricName) {
-      getLogs(componentName, podsName, metricName);
+      const intervalId = setInterval(() => {
+        getLogs(componentName, podsName, metricName);
+      }, 5000); // Poll every 5 seconds
+
+      return () => clearInterval(intervalId); // Cleanup on unmount
     } else {
       setLogs(null);
     }
-  }, [componentName, podsName, metricName]); // Removed lastUpdated
+  }, [componentName, podsName, metricName]);
 
   const showModal = () => {
     setVisible(true);
