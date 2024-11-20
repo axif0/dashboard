@@ -263,6 +263,7 @@ export default function Component() {
               componentName={selectedOption}
               podsName={selectedPod}
               metricName={selectedMetric ? selectedMetric.name : ''}
+              isSyncOn={syncSettings[selectedOption] || false}
             />
           </Space>
         </Sider>

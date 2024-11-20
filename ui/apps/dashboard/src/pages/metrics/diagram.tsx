@@ -8,9 +8,10 @@ interface MetricTabsProps {
   componentName: string;
   podsName: string;
   metricName: string;
+  isSyncOn: boolean;
 }
 
-const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName }) => {
+const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, componentName, podsName, metricName, isSyncOn }) => {
   const [visible, setVisible] = useState(false);
   const [logs, setLogs] = useState<MetricDetailsResponse | null>(null);
 
@@ -32,15 +33,21 @@ const Diagram: React.FC<MetricTabsProps> = ({ activeTab, setActiveTab, component
 
   useEffect(() => {
     if (componentName && podsName && metricName) {
-      const intervalId = setInterval(() => {
-        getLogs(componentName, podsName, metricName);
-      }, 5000); // Poll every 5 seconds
-
-      return () => clearInterval(intervalId); // Cleanup on unmount
+      getLogs(componentName, podsName, metricName);
     } else {
       setLogs(null);
     }
   }, [componentName, podsName, metricName]);
+
+  useEffect(() => {
+    if (componentName && podsName && metricName && isSyncOn) {
+      const intervalId = setInterval(() => {
+        getLogs(componentName, podsName, metricName);
+      }, 5000);
+
+      return () => clearInterval(intervalId);
+    }
+  }, [componentName, podsName, metricName, isSyncOn]);
 
   const showModal = () => {
     setVisible(true);
