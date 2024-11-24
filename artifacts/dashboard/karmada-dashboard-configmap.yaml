@@ -89,6 +89,9 @@ data:
       - path: /overview
         enable: true
         sidebar_key: OVERVIEW
+      - path: /metrics
+        enable: true
+        sidebar_key: METRICS
       - path: /multicloud-resource-manage
         enable: true
         sidebar_key: MULTICLOUD-RESOURCE-MANAGE

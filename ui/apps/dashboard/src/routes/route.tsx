@@ -78,7 +78,7 @@ export function getRoutes() {
           path: '/metrics',
           element: <Metrics />,
           handle: {
-            sidebarKey: 'OVERVIEW',
+            sidebarKey: 'METRICS',
             sidebarName: i18nInstance.t('f3a4b2c0b3e6d8e2f83c8efb988a5684'),
             icon: <Icons.metrics {...IconStyles} />,
           },
